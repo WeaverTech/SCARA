@@ -59,11 +59,11 @@ Zasilanie silnikow pozostaje prowadzone oddzielnie do sterownikow.
 
 ```text
 .
-├── cad/                  # Modele 3D i pliki produkcyjne
-├── docs/                 # Schematy, notatki montazowe i kalibracja
-└── src/
-    └── main/
-        └── main.ino      # Szkic Arduino Mega z AccelStepper
++-- cad/                  # Modele 3D i pliki produkcyjne
++-- docs/                 # Schematy, notatki montazowe i kalibracja
+`-- src/
+    `-- main/
+        `-- main.ino      # Szkic Arduino Mega z AccelStepper
 ```
 
 ## Oprogramowanie

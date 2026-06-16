@@ -1,4 +1,5 @@
 #include <AccelStepper.h>
+#include <math.h>
 
 // Arduino Mega 2560 pin map for external TB6600 drivers.
 // TB6600 inputs are typically labeled PUL, DIR and ENA.
@@ -53,6 +54,21 @@ AccelStepper armAxis(AccelStepper::DRIVER, Pins::ARM_STEP, Pins::ARM_DIR);
 AccelStepper toolAxis(AccelStepper::DRIVER, Pins::TOOL_STEP, Pins::TOOL_DIR);
 
 String serialLine;
+
+void setupAxis(AccelStepper& axis, uint8_t enablePin, float maxSpeed, float acceleration);
+void enableAllAxes();
+void disableAllAxes();
+void runAllAxes();
+bool isHomeTriggered(uint8_t pin);
+void homeZAxis();
+void homeArmAxis();
+void moveZToMillimeters(float millimeters);
+void moveArmToDegrees(float degrees);
+void moveToolToDegrees(float degrees);
+void stopMotion();
+void printStatus();
+void handleSerial();
+void processCommand(String command);
 
 void setupAxis(AccelStepper& axis, uint8_t enablePin, float maxSpeed, float acceleration) {
   axis.setEnablePin(enablePin);
@@ -111,14 +127,19 @@ void homeZAxis() {
   zAxis.setMaxSpeed(Motion::HOMING_SPEED);
   zAxis.moveTo(Motion::HOMING_SEARCH_TRAVEL_STEPS);
 
-  while (!isHomeTriggered(Pins::Z_HOME)) {
+  while (!isHomeTriggered(Pins::Z_HOME) && zAxis.distanceToGo() != 0) {
     zAxis.run();
   }
 
   zAxis.stop();
   zAxis.setCurrentPosition(0);
   zAxis.setMaxSpeed(Motion::Z_MAX_SPEED);
-  Serial.println(F("Z axis homed."));
+
+  if (isHomeTriggered(Pins::Z_HOME)) {
+    Serial.println(F("Z axis homed."));
+  } else {
+    Serial.println(F("Z homing stopped: sensor not reached."));
+  }
 }
 
 void homeArmAxis() {
@@ -126,14 +147,19 @@ void homeArmAxis() {
   armAxis.setMaxSpeed(Motion::HOMING_SPEED);
   armAxis.moveTo(Motion::HOMING_SEARCH_TRAVEL_STEPS);
 
-  while (!isHomeTriggered(Pins::ARM_HOME)) {
+  while (!isHomeTriggered(Pins::ARM_HOME) && armAxis.distanceToGo() != 0) {
     armAxis.run();
   }
 
   armAxis.stop();
   armAxis.setCurrentPosition(0);
   armAxis.setMaxSpeed(Motion::ARM_MAX_SPEED);
-  Serial.println(F("Main arm axis homed."));
+
+  if (isHomeTriggered(Pins::ARM_HOME)) {
+    Serial.println(F("Main arm axis homed."));
+  } else {
+    Serial.println(F("Arm homing stopped: sensor not reached."));
+  }
 }
 
 void moveZToMillimeters(float millimeters) {
@@ -183,23 +209,23 @@ void processCommand(String command) {
   command.trim();
   command.toUpperCase();
 
-  if (command == F("STATUS")) {
+  if (command == "STATUS") {
     printStatus();
-  } else if (command == F("HOME Z")) {
+  } else if (command == "HOME Z") {
     homeZAxis();
-  } else if (command == F("HOME ARM")) {
+  } else if (command == "HOME ARM") {
     homeArmAxis();
-  } else if (command.startsWith(F("MOVE Z "))) {
+  } else if (command.startsWith("MOVE Z ")) {
     moveZToMillimeters(command.substring(7).toFloat());
-  } else if (command.startsWith(F("MOVE ARM "))) {
+  } else if (command.startsWith("MOVE ARM ")) {
     moveArmToDegrees(command.substring(9).toFloat());
-  } else if (command.startsWith(F("MOVE TOOL "))) {
+  } else if (command.startsWith("MOVE TOOL ")) {
     moveToolToDegrees(command.substring(10).toFloat());
-  } else if (command == F("STOP")) {
+  } else if (command == "STOP") {
     stopMotion();
-  } else if (command == F("DISABLE")) {
+  } else if (command == "DISABLE") {
     disableAllAxes();
-  } else if (command == F("ENABLE")) {
+  } else if (command == "ENABLE") {
     enableAllAxes();
   } else {
     Serial.print(F("Unknown command: "));
