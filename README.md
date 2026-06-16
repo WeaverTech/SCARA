@@ -102,10 +102,19 @@ Wybrane elementy z listy materialowej (BOM):
 .
 +-- cad/                  # Modele 3D (STEP) i zrzuty konstrukcji
 +-- docs/                 # Schematy, notatki montazowe i kalibracja
++-- sim/                  # Kinematyka (URDF) i symulacja (PyBullet)
 `-- src/
     `-- main/
         `-- main.ino      # Szkic Arduino Mega z AccelStepper (4 osie)
 ```
+
+## Kinematyka i symulacja
+
+W katalogu [`sim/`](sim/) znajduje sie model **URDF** robota, analityczna
+kinematyka prosta i odwrotna (`kinematics.py`) oraz symulacja w **PyBullet**
+(`simulate.py`). Przeliczniki katow na kroki silnikow sa spojne z firmware.
+Model URDF jest standardowy, wiec da sie go uzyc takze w ROS 2 (RViz2, MoveIt 2,
+Gazebo). Szczegoly: [`sim/README.md`](sim/README.md).
 
 ## Oprogramowanie
 

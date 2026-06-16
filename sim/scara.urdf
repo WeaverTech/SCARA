@@ -1,0 +1,174 @@
+<?xml version="1.0"?>
+<!--
+  SCARA robot - model kinematyczny (URDF).
+
+  Lancuch kinematyczny (zgodny z firmware src/main/main.ino):
+    world
+      |-- (fixed)      base_column        # pionowa wieza z profili 2020
+            |-- (Z, prismatic)  z_carriage   # podnoszenie na pasku GT2
+                  |-- (shoulder, revolute)  link1   # bark, cykloidalna 20:1
+                        |-- (elbow, revolute)  link2  # lokiec, cykloidalna 20:1
+                              |-- (tool, revolute)  tool_link  # efektor (pasek)
+                                    |-- (fixed)  tool_tip       # punkt TCP
+
+  Jednostki URDF: metry, radiany.
+  Wszystkie osie obrotowe sa pionowe (+Z) - typowa geometria SCARA.
+
+  Wymiary (z briefu / CAD; TODO: dlugosci czlonow potwierdzic pomiarem):
+    Z offset (kolumna -> os barku)      = 0.165 m
+    L1 (os barku  -> os lokcia)         = 0.150 m   (TODO measure)
+    L2 (os lokcia -> os efektora)       = 0.150 m   (TODO measure)
+    Skok osi Z (zakres prismatic)       = 0.300 m   (TODO measure)
+-->
+<robot name="scara">
+
+  <!-- ===================== Materialy ===================== -->
+  <material name="alu">   <color rgba="0.25 0.25 0.27 1.0"/></material>
+  <material name="carriage"><color rgba="0.85 0.85 0.88 1.0"/></material>
+  <material name="arm">   <color rgba="0.90 0.90 0.92 1.0"/></material>
+  <material name="forearm"><color rgba="0.75 0.78 0.82 1.0"/></material>
+  <material name="tool">  <color rgba="0.20 0.55 0.90 1.0"/></material>
+
+  <!-- ===================== Baza / kolumna ===================== -->
+  <link name="world"/>
+
+  <link name="base_column">
+    <visual>
+      <origin xyz="0 0 0.30" rpy="0 0 0"/>
+      <geometry><box size="0.05 0.20 0.60"/></geometry>
+      <material name="alu"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.30" rpy="0 0 0"/>
+      <geometry><box size="0.05 0.20 0.60"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0.30" rpy="0 0 0"/>
+      <mass value="3.0"/>
+      <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.02"/>
+    </inertial>
+  </link>
+
+  <joint name="base_fixed" type="fixed">
+    <parent link="world"/>
+    <child link="base_column"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ===================== Os Z (prismatic, pasek GT2) ===================== -->
+  <link name="z_carriage">
+    <visual>
+      <origin xyz="0.04 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.10 0.12 0.04"/></geometry>
+      <material name="carriage"/>
+    </visual>
+    <collision>
+      <origin xyz="0.04 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.10 0.12 0.04"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.04 0 0" rpy="0 0 0"/>
+      <mass value="0.8"/>
+      <inertia ixx="0.002" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.002"/>
+    </inertial>
+  </link>
+
+  <joint name="z_lift" type="prismatic">
+    <parent link="base_column"/>
+    <child link="z_carriage"/>
+    <!-- Wozek startuje u dolu zakresu, prowadnice po stronie +X kolumny. -->
+    <origin xyz="0.025 0 0.15" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0.0" upper="0.30" effort="50.0" velocity="0.05"/>
+  </joint>
+
+  <!-- ===================== Bark (revolute, cykloidalna 20:1) ===================== -->
+  <link name="link1">
+    <visual>
+      <origin xyz="0.075 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.150 0.05 0.025"/></geometry>
+      <material name="arm"/>
+    </visual>
+    <collision>
+      <origin xyz="0.075 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.150 0.05 0.025"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.075 0 0" rpy="0 0 0"/>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.002"/>
+    </inertial>
+  </link>
+
+  <joint name="shoulder" type="revolute">
+    <parent link="z_carriage"/>
+    <child link="link1"/>
+    <!-- Os barku przesunieta o offset osi Z (0.165 m) wzdluz +X od kolumny. -->
+    <origin xyz="0.165 0 0.04" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.1416" upper="3.1416" effort="20.0" velocity="1.0"/>
+  </joint>
+
+  <!-- ===================== Lokiec (revolute, cykloidalna 20:1) ===================== -->
+  <link name="link2">
+    <visual>
+      <origin xyz="0.075 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.150 0.045 0.022"/></geometry>
+      <material name="forearm"/>
+    </visual>
+    <collision>
+      <origin xyz="0.075 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.150 0.045 0.022"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.075 0 0" rpy="0 0 0"/>
+      <mass value="0.35"/>
+      <inertia ixx="0.0008" ixy="0" ixz="0" iyy="0.0015" iyz="0" izz="0.0015"/>
+    </inertial>
+  </link>
+
+  <joint name="elbow" type="revolute">
+    <parent link="link1"/>
+    <child link="link2"/>
+    <!-- L1 = 0.150 m wzdluz osi czlonu 1. -->
+    <origin xyz="0.150 0 -0.025" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.6180" upper="2.6180" effort="20.0" velocity="1.0"/>
+  </joint>
+
+  <!-- ===================== Efektor (revolute, pasek) ===================== -->
+  <link name="tool_link">
+    <visual>
+      <origin xyz="0 0 -0.02" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.02" length="0.04"/></geometry>
+      <material name="tool"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.02" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.02" length="0.04"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 -0.02" rpy="0 0 0"/>
+      <mass value="0.15"/>
+      <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0002"/>
+    </inertial>
+  </link>
+
+  <joint name="tool" type="revolute">
+    <parent link="link2"/>
+    <child link="tool_link"/>
+    <!-- L2 = 0.150 m wzdluz osi czlonu 2. -->
+    <origin xyz="0.150 0 -0.022" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.1416" upper="3.1416" effort="10.0" velocity="2.0"/>
+  </joint>
+
+  <!-- Punkt TCP (Tool Center Point) - czubek narzedzia. -->
+  <link name="tool_tip"/>
+  <joint name="tcp_fixed" type="fixed">
+    <parent link="tool_link"/>
+    <child link="tool_tip"/>
+    <origin xyz="0 0 -0.04" rpy="0 0 0"/>
+  </joint>
+
+</robot>
