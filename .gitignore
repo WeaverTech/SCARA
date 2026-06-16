@@ -1,0 +1,17 @@
+# Arduino / build artifacts
+build/
+*.hex
+*.elf
+*.bin
+.arduino/
+*.tmp
+
+# Slicer / CAD output
+*.gcode
+*.3mf
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
