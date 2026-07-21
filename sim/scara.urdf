@@ -4,21 +4,21 @@
 
   Lancuch kinematyczny (zgodny z firmware src/main/main.ino):
     world
-      |-- (fixed)      base_column        # pionowa wieza z profili 2020
-            |-- (Z, prismatic)  z_carriage   # podnoszenie na pasku GT2
-                  |-- (shoulder, revolute)  link1   # bark, cykloidalna 20:1
-                        |-- (elbow, revolute)  link2  # lokiec, cykloidalna 20:1
-                              |-- (tool, revolute)  tool_link  # efektor (pasek)
-                                    |-- (fixed)  tool_tip       # punkt TCP
+      +- (fixed)      base_column        # pionowa wieza z profili 2020
+            +- (Z, prismatic)  z_carriage   # podnoszenie na pasku GT2
+                  +- (shoulder, revolute)  link1   # bark, cykloidalna 20:1
+                        +- (elbow, revolute)  link2  # lokiec, cykloidalna 20:1
+                              +- (tool, revolute)  tool_link  # efektor (pasek)
+                                    +- (fixed)  tool_tip       # punkt TCP
 
   Jednostki URDF: metry, radiany.
   Wszystkie osie obrotowe sa pionowe (+Z) - typowa geometria SCARA.
 
   Wymiary (z briefu / CAD; TODO: dlugosci czlonow potwierdzic pomiarem):
     Z offset (kolumna -> os barku)      = 0.165 m
-    L1 (os barku  -> os lokcia)         = 0.150 m   (TODO measure)
-    L2 (os lokcia -> os efektora)       = 0.150 m   (TODO measure)
-    Skok osi Z (zakres prismatic)       = 0.300 m   (TODO measure)
+    L1 (os barku  -> os lokcia)         = 0.139928 m  (zmierzone w CAD)
+    L2 (os lokcia -> os efektora)       = 0.140000 m  (zmierzone w CAD)
+    Skok osi Z (zakres prismatic)       = 0.150 m
 -->
 <robot name="scara">
 
@@ -79,22 +79,22 @@
     <!-- Wozek startuje u dolu zakresu, prowadnice po stronie +X kolumny. -->
     <origin xyz="0.025 0 0.15" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
-    <limit lower="0.0" upper="0.30" effort="50.0" velocity="0.05"/>
+    <limit lower="0.0" upper="0.15" effort="50.0" velocity="0.05"/>
   </joint>
 
   <!-- ===================== Bark (revolute, cykloidalna 20:1) ===================== -->
   <link name="link1">
     <visual>
-      <origin xyz="0.075 0 0" rpy="0 0 0"/>
-      <geometry><box size="0.150 0.05 0.025"/></geometry>
+      <origin xyz="0.069964 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.139928 0.05 0.025"/></geometry>
       <material name="arm"/>
     </visual>
     <collision>
-      <origin xyz="0.075 0 0" rpy="0 0 0"/>
-      <geometry><box size="0.150 0.05 0.025"/></geometry>
+      <origin xyz="0.069964 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.139928 0.05 0.025"/></geometry>
     </collision>
     <inertial>
-      <origin xyz="0.075 0 0" rpy="0 0 0"/>
+      <origin xyz="0.069964 0 0" rpy="0 0 0"/>
       <mass value="0.5"/>
       <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.002"/>
     </inertial>
@@ -112,16 +112,16 @@
   <!-- ===================== Lokiec (revolute, cykloidalna 20:1) ===================== -->
   <link name="link2">
     <visual>
-      <origin xyz="0.075 0 0" rpy="0 0 0"/>
-      <geometry><box size="0.150 0.045 0.022"/></geometry>
+      <origin xyz="0.070 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.140 0.045 0.022"/></geometry>
       <material name="forearm"/>
     </visual>
     <collision>
-      <origin xyz="0.075 0 0" rpy="0 0 0"/>
-      <geometry><box size="0.150 0.045 0.022"/></geometry>
+      <origin xyz="0.070 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.140 0.045 0.022"/></geometry>
     </collision>
     <inertial>
-      <origin xyz="0.075 0 0" rpy="0 0 0"/>
+      <origin xyz="0.070 0 0" rpy="0 0 0"/>
       <mass value="0.35"/>
       <inertia ixx="0.0008" ixy="0" ixz="0" iyy="0.0015" iyz="0" izz="0.0015"/>
     </inertial>
@@ -130,8 +130,8 @@
   <joint name="elbow" type="revolute">
     <parent link="link1"/>
     <child link="link2"/>
-    <!-- L1 = 0.150 m wzdluz osi czlonu 1. -->
-    <origin xyz="0.150 0 -0.025" rpy="0 0 0"/>
+    <!-- L1 = 0.139928 m wzdluz osi czlonu 1 (zmierzone w CAD). -->
+    <origin xyz="0.139928 0 -0.025" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
     <limit lower="-2.6180" upper="2.6180" effort="20.0" velocity="1.0"/>
   </joint>
@@ -157,8 +157,8 @@
   <joint name="tool" type="revolute">
     <parent link="link2"/>
     <child link="tool_link"/>
-    <!-- L2 = 0.150 m wzdluz osi czlonu 2. -->
-    <origin xyz="0.150 0 -0.022" rpy="0 0 0"/>
+    <!-- L2 = 0.140 m wzdluz osi czlonu 2 (zmierzone w CAD). -->
+    <origin xyz="0.140 0 -0.022" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
     <limit lower="-3.1416" upper="3.1416" effort="10.0" velocity="2.0"/>
   </joint>

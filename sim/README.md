@@ -28,14 +28,15 @@ world
                       └─(fixed) tool_tip         # punkt TCP
 ```
 
-Parametry (z briefu / CAD; `TODO` = do potwierdzenia pomiarem):
+Parametry (zmierzone w CAD):
 
 | Symbol | Wartosc | Opis |
 | --- | ---: | --- |
 | `z_offset` | 0.165 m | Kolumna -> os barku |
-| `L1` | 0.150 m* | Bark -> lokiec (*TODO measure) |
-| `L2` | 0.150 m* | Lokiec -> efektor (*TODO measure) |
-| zakres Z | 0–0.30 m* | Skok osi Z (*TODO measure) |
+| `L1` | 0.139928 m | Bark -> lokiec |
+| `L2` | 0.140000 m | Lokiec -> efektor |
+| zakres Z | 0–0.15 m | Skok osi Z |
+| strefa wykluczenia | R = 0.045 m | Wokol kolumny Z |
 
 ## Kinematyka prosta (FK)
 
@@ -66,9 +67,10 @@ Zwraca `None`, gdy punkt jest poza zasiegiem `|L1−L2| ≤ r ≤ L1+L2`.
 ## Mapowanie na kroki silnikow (spojne z firmware)
 
 ```
-osie obrotowe (cykloidalna 20:1): (200·16·20)/360 = 177.7778 kroków/°
-oś Z (pasek GT2 20T, 2 mm):       3200/(20·2)      = 80 kroków/mm
-efektor (pasek):                  (200·16·ratio)/360
+J1 bark   (cykloidalna 20:1): (200·16·20)/360 = 177.7778 kroków/°
+J2 lokiec (cykloidalna 14:1): (200·16·14)/360 = 124.4444 kroków/°
+oś Z (śruba napędowa):        400 kroków/mm
+efektor (pasek):              (200·16·ratio)/360
 ```
 
 ## Uruchomienie
@@ -115,7 +117,7 @@ Aby uzyc realnych ksztaltow:
 
 ## Status / TODO
 
-- [ ] Zmierzyc realne L1, L2 i zakres osi Z (z `cad/SCARA.step`).
+- [x] Zmierzone realne L1 = 139.928 mm, L2 = 140.000 mm (CAD).
 - [ ] Doprecyzowac limity stawow (z renderu widoczne adnotacje 60°/15°/25°).
 - [ ] Dodac siatki STL dla lepszej wizualizacji i kolizji.
 - [ ] (Opcjonalnie) pakiet ROS 2 + MoveIt 2.

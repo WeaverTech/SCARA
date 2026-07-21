@@ -1,325 +1,570 @@
 #include <AccelStepper.h>
 #include <math.h>
 
+#include "config.h"
+
 // ============================================================================
-//  SCARA robot - full target configuration (4 axes).
+//  SCARA robot firmware - Arduino Mega 2560 + 4x TB6600 + AccelStepper.
 // ----------------------------------------------------------------------------
-//  Kinematic chain:
-//    Z        - vertical lift, GT2 belt drive (NEMA 17)
-//    SHOULDER - main arm rotation, cycloidal drive 20:1 (NEMA 17)
-//    ELBOW    - middle joint rotation, cycloidal drive 20:1 (NEMA 17)
-//    TOOL     - end effector rotation, GT2 belt drive (NEMA 17)
+//  Osie:
+//    J1   - bark   (cykloidalna 20:1), krancowka na pinie 2 (INT)
+//    J2   - lokiec (cykloidalna 14:1), krancowka na pinie 3 (INT)
+//    Z    - sruba napedowa,            krancowka na pinie 18 (INT)
+//    TOOL - efektor (pasek GT2), bez krancowki (zero programowe)
 //
-//  All four axes use external TB6600 drivers (PUL/DIR/ENA) at 1/16 microstep.
+//  Protokol szeregowy (115200, linie zakonczone '\n') dla hosta Python:
+//    Kazda komenda otrzymuje dokladnie jedna linie odpowiedzi:
+//      "OK[ dane]"  albo  "ERR <KOD> <opis>"
+//    Po zakonczeniu kazdego ruchu kontroler wysyla asynchronicznie "DONE".
 //
-//  NOTE (physical prototype): the ELBOW joint is modeled and supported here as
-//  the final design, but the second cycloidal gearbox may not be built yet.
-//  For bench testing without the elbow gearbox set ELBOW_PRESENT = false:
-//  the controller will then skip enabling/homing/moving that axis.
+//  Komendy:
+//    PING                        -> OK PONG
+//    VERSION                     -> OK SCARA-FW 2.0
+//    STATUS                      -> OK STATE=<IDLE|MOVING|HOMING> HOMED=<0|1>
+//                                      X=.. Y=.. Z=.. J1=.. J2=.. TOOL=..
+//    HOME                        homing wszystkich osi (Z -> J1 -> J2)
+//    HOME J1|J2|Z                homing jednej osi
+//    MOVE X<f> Y<f> [Z<f>] [T<f>] [E0|E1]   ruch IK do punktu (mm/stopnie);
+//                                E0 = lokiec "down", E1 = "up" (domyslnie E1)
+//    JOG J1|J2|TOOL <deg>        ruch osi do zadanego kata (bez IK)
+//    JOG Z <mm>                  ruch osi Z do zadanej wysokosci
+//    IK X<f> Y<f> [E0|E1]        tylko obliczenie IK (bez ruchu) -> OK J1=.. J2=..
+//    STOP                        zatrzymanie z rampa hamowania
+//    ESTOP                       natychmiastowe zatrzymanie + DISABLE
+//    ENABLE / DISABLE            zalaczenie / odlaczenie sterownikow
+//
+//  Kody bledow: BAD_CMD, NOT_HOMED, OUT_OF_REACH, EXCLUSION_ZONE,
+//               JOINT_LIMIT, BUSY, LIMIT_HIT, HOMING_FAIL, AXIS_DISABLED
 // ============================================================================
 
-// Arduino Mega 2560 pin map for external TB6600 drivers.
-namespace Pins {
-constexpr uint8_t Z_STEP = 22;
-constexpr uint8_t Z_DIR = 23;
-constexpr uint8_t Z_ENABLE = 24;
+AccelStepper axisJ1(AccelStepper::DRIVER, PIN_J1_STEP, PIN_J1_DIR);
+AccelStepper axisJ2(AccelStepper::DRIVER, PIN_J2_STEP, PIN_J2_DIR);
+AccelStepper axisZ(AccelStepper::DRIVER, PIN_Z_STEP, PIN_Z_DIR);
+AccelStepper axisTool(AccelStepper::DRIVER, PIN_TOOL_STEP, PIN_TOOL_DIR);
 
-constexpr uint8_t SHOULDER_STEP = 26;
-constexpr uint8_t SHOULDER_DIR = 27;
-constexpr uint8_t SHOULDER_ENABLE = 28;
+enum class State : uint8_t { IDLE, MOVING, HOMING };
 
-constexpr uint8_t ELBOW_STEP = 30;
-constexpr uint8_t ELBOW_DIR = 31;
-constexpr uint8_t ELBOW_ENABLE = 32;
+State state = State::IDLE;
+bool homedJ1 = false;
+bool homedJ2 = false;
+bool homedZ = false;
+bool motionDoneReported = true;
 
-constexpr uint8_t TOOL_STEP = 34;
-constexpr uint8_t TOOL_DIR = 35;
-constexpr uint8_t TOOL_ENABLE = 36;
+// Flagi ustawiane w ISR krancowek. Poza homingiem trafienie krancowki
+// oznacza utrate pozycji -> natychmiastowy stop i wymagany ponowny homing.
+volatile bool limitHitJ1 = false;
+volatile bool limitHitJ2 = false;
+volatile bool limitHitZ = false;
+volatile bool limitMonitoringEnabled = false;
 
-// Optical slot endstops (homing). The TOOL axis has no endstop.
-constexpr uint8_t Z_HOME = 40;
-constexpr uint8_t SHOULDER_HOME = 41;
-constexpr uint8_t ELBOW_HOME = 42;
-}  // namespace Pins
+char lineBuffer[96];
+uint8_t lineLength = 0;
 
-// Set to false to run the prototype without the second (elbow) cycloidal drive.
-// Keep true for the full, target machine.
-constexpr bool ELBOW_PRESENT = true;
+// ---------------------------------------------------------------- ISR
+void isrLimitJ1() {
+  if (limitMonitoringEnabled) limitHitJ1 = true;
+}
+void isrLimitJ2() {
+  if (limitMonitoringEnabled) limitHitJ2 = true;
+}
+void isrLimitZ() {
+  if (limitMonitoringEnabled) limitHitZ = true;
+}
 
-namespace Mechanics {
-constexpr float MOTOR_STEPS_PER_REV = 200.0F;
-constexpr float MICROSTEPS = 16.0F;
-constexpr float STEPS_PER_REV = MOTOR_STEPS_PER_REV * MICROSTEPS;  // 3200
+// ------------------------------------------------------------- helpers
+bool allHomed() { return homedJ1 && homedZ && (homedJ2 || !ELBOW_PRESENT); }
 
-// --- Rotary joints: cycloidal drive 20:1 ---
-// (200 * 16 * 20) / 360 = 177.7778 steps per output degree.
-constexpr float SHOULDER_GEAR_RATIO = 20.0F;
-constexpr float ELBOW_GEAR_RATIO = 20.0F;
+bool limitPressed(uint8_t pin) { return digitalRead(pin) == LIMIT_ACTIVE_STATE; }
 
-constexpr float SHOULDER_STEPS_PER_DEGREE =
-    (STEPS_PER_REV * SHOULDER_GEAR_RATIO) / 360.0F;
-constexpr float ELBOW_STEPS_PER_DEGREE =
-    (STEPS_PER_REV * ELBOW_GEAR_RATIO) / 360.0F;
+float j1Degrees() { return axisJ1.currentPosition() / STEPS_PER_DEG_J1; }
+float j2Degrees() { return axisJ2.currentPosition() / STEPS_PER_DEG_J2; }
+float zMillimeters() { return axisZ.currentPosition() / STEPS_PER_MM_Z; }
+float toolDegrees() { return axisTool.currentPosition() / STEPS_PER_DEG_TOOL; }
 
-// --- Z axis: GT2 belt drive ---
-// Travel per motor revolution = pulley teeth * belt pitch (GT2 = 2 mm).
-// steps/mm = STEPS_PER_REV / (Z_PULLEY_TEETH * Z_BELT_PITCH_MM).
-// TODO: confirm the Z pulley tooth count from the CAD/BOM.
-constexpr float Z_BELT_PITCH_MM = 2.0F;   // GT2
-constexpr float Z_PULLEY_TEETH = 20.0F;   // TODO: verify (20T assumed)
-constexpr float Z_STEPS_PER_MM =
-    STEPS_PER_REV / (Z_PULLEY_TEETH * Z_BELT_PITCH_MM);
+bool anyAxisMoving() {
+  return axisJ1.distanceToGo() != 0 || axisZ.distanceToGo() != 0 ||
+         axisTool.distanceToGo() != 0 ||
+         (ELBOW_PRESENT && axisJ2.distanceToGo() != 0);
+}
 
-// --- Tool (effector): GT2 belt drive with reduction ---
-// ratio = driven pulley teeth / motor pulley teeth.
-// steps/deg = (STEPS_PER_REV * ratio) / 360.
-// TODO: count pulley teeth and update the ratio.
-constexpr float TOOL_BELT_RATIO = 1.0F;   // TODO: verify
-constexpr float TOOL_STEPS_PER_DEGREE =
-    (STEPS_PER_REV * TOOL_BELT_RATIO) / 360.0F;
+void sendOk() { Serial.println(F("OK")); }
 
-// --- Geometry (link lengths, for future inverse kinematics) ---
-// L1 = shoulder axis -> elbow axis, L2 = elbow axis -> tool axis.
-// The brief gives 150 mm from the main rotary axis to the effector for the
-// single-link simplification; with the elbow present the two links must be
-// measured separately from the model.
-// TODO: measure ARM1_LENGTH_MM and ARM2_LENGTH_MM from SCARA.step.
-constexpr float Z_AXIS_OFFSET_MM = 165.0F;
-constexpr float ARM1_LENGTH_MM = 150.0F;  // TODO: measure shoulder->elbow
-constexpr float ARM2_LENGTH_MM = 150.0F;  // TODO: measure elbow->tool
-}  // namespace Mechanics
+void sendErr(const __FlashStringHelper* code, const __FlashStringHelper* msg) {
+  Serial.print(F("ERR "));
+  Serial.print(code);
+  Serial.print(F(" "));
+  Serial.println(msg);
+}
 
-namespace Motion {
-constexpr float Z_MAX_SPEED = 1200.0F;
-constexpr float Z_ACCELERATION = 600.0F;
+// --------------------------------------------------------- kinematyka
+// Kinematyka prosta: katy stawow [deg] -> pozycja TCP [mm] w ukladzie barku.
+void forwardKinematics(float j1Deg, float j2Deg, float& x, float& y) {
+  const float t1 = radians(j1Deg);
+  const float t12 = radians(j1Deg + j2Deg);
+  x = ARM_L1_MM * cosf(t1) + ARM_L2_MM * cosf(t12);
+  y = ARM_L1_MM * sinf(t1) + ARM_L2_MM * sinf(t12);
+}
 
-constexpr float SHOULDER_MAX_SPEED = 900.0F;
-constexpr float SHOULDER_ACCELERATION = 450.0F;
+// Kinematyka odwrotna: (x, y) [mm] -> katy stawow [deg].
+// elbowUp: true -> t2 >= 0 ("up"), false -> t2 <= 0 ("down").
+// Zwraca false, gdy punkt jest poza pierscieniem zasiegu.
+bool inverseKinematics(float x, float y, bool elbowUp, float& j1Deg, float& j2Deg) {
+  const float r2 = x * x + y * y;
+  const float r = sqrtf(r2);
+  if (r > MAX_REACH_MM + 0.001f || r < MIN_REACH_MM - 0.001f) {
+    return false;
+  }
 
-constexpr float ELBOW_MAX_SPEED = 900.0F;
-constexpr float ELBOW_ACCELERATION = 450.0F;
+  float cosT2 = (r2 - ARM_L1_MM * ARM_L1_MM - ARM_L2_MM * ARM_L2_MM) /
+                (2.0f * ARM_L1_MM * ARM_L2_MM);
+  cosT2 = constrain(cosT2, -1.0f, 1.0f);
+  float t2 = acosf(cosT2);
+  if (!elbowUp) t2 = -t2;
 
-constexpr float TOOL_MAX_SPEED = 1200.0F;
-constexpr float TOOL_ACCELERATION = 600.0F;
+  const float t1 = atan2f(y, x) -
+                   atan2f(ARM_L2_MM * sinf(t2), ARM_L1_MM + ARM_L2_MM * cosf(t2));
 
-constexpr float HOMING_SPEED = 250.0F;
-constexpr long HOMING_SEARCH_TRAVEL_STEPS = -200000L;
-}  // namespace Motion
+  j1Deg = degrees(t1);
+  j2Deg = degrees(t2);
+  return true;
+}
 
-AccelStepper zAxis(AccelStepper::DRIVER, Pins::Z_STEP, Pins::Z_DIR);
-AccelStepper shoulderAxis(AccelStepper::DRIVER, Pins::SHOULDER_STEP, Pins::SHOULDER_DIR);
-AccelStepper elbowAxis(AccelStepper::DRIVER, Pins::ELBOW_STEP, Pins::ELBOW_DIR);
-AccelStepper toolAxis(AccelStepper::DRIVER, Pins::TOOL_STEP, Pins::TOOL_DIR);
+// Kolumna Z stoi w punkcie (-Z_AXIS_OFFSET_MM, 0) ukladu barku.
+// Punkt docelowy nie moze wejsc w strefe wykluczenia wokol kolumny.
+bool insideColumnExclusion(float x, float y) {
+  const float dx = x + Z_AXIS_OFFSET_MM;
+  const float dy = y;
+  return (dx * dx + dy * dy) < (Z_COL_EXCLUSION_R * Z_COL_EXCLUSION_R);
+}
 
-String serialLine;
+bool jointsWithinLimits(float j1Deg, float j2Deg) {
+  if (j1Deg < J1_MIN_DEG || j1Deg > J1_MAX_DEG) return false;
+  if (ELBOW_PRESENT && (j2Deg < J2_MIN_DEG || j2Deg > J2_MAX_DEG)) return false;
+  return true;
+}
 
-void setupAxis(AccelStepper& axis, uint8_t enablePin, float maxSpeed, float acceleration);
-void enableAllAxes();
-void disableAllAxes();
-void runAllAxes();
-bool isHomeTriggered(uint8_t pin);
-void homeZAxis();
-void homeShoulderAxis();
-void homeElbowAxis();
-void moveZToMillimeters(float millimeters);
-void moveShoulderToDegrees(float degrees);
-void moveElbowToDegrees(float degrees);
-void moveToolToDegrees(float degrees);
-void stopMotion();
-void printStatus();
-void handleSerial();
-void processCommand(String command);
+// --------------------------------------------------------------- ruch
+void enableAll() {
+  axisJ1.enableOutputs();
+  axisZ.enableOutputs();
+  axisTool.enableOutputs();
+  if (ELBOW_PRESENT) axisJ2.enableOutputs();
+}
 
-void setupAxis(AccelStepper& axis, uint8_t enablePin, float maxSpeed, float acceleration) {
+void disableAll() {
+  axisJ1.disableOutputs();
+  axisJ2.disableOutputs();
+  axisZ.disableOutputs();
+  axisTool.disableOutputs();
+}
+
+void stopAllRamped() {
+  axisJ1.stop();
+  axisJ2.stop();
+  axisZ.stop();
+  axisTool.stop();
+}
+
+void emergencyStop() {
+  // Zerujemy zadane cele w miejscu - bez rampy.
+  axisJ1.setCurrentPosition(axisJ1.currentPosition());
+  axisJ2.setCurrentPosition(axisJ2.currentPosition());
+  axisZ.setCurrentPosition(axisZ.currentPosition());
+  axisTool.setCurrentPosition(axisTool.currentPosition());
+  disableAll();
+  homedJ1 = homedJ2 = homedZ = false;
+  state = State::IDLE;
+  motionDoneReported = true;
+}
+
+void runAllAxes() {
+  axisJ1.run();
+  axisZ.run();
+  axisTool.run();
+  if (ELBOW_PRESENT) axisJ2.run();
+}
+
+// ------------------------------------------------------------- homing
+// Sekwencja: szybki najazd -> odjazd -> wolny najazd (latch) -> zero osi.
+bool homeAxisBlocking(AccelStepper& axis, uint8_t limitPin, int8_t dir,
+                      long homeSteps, float restoreSpeed) {
+  limitMonitoringEnabled = false;  // ISR nie moze przerywac homingu
+
+  const float savedSpeed = restoreSpeed;
+
+  // Faza 1: szybki najazd na krancowke.
+  axis.setMaxSpeed(HOMING_SEEK_SPEED);
+  axis.move((long)dir * HOMING_MAX_TRAVEL_STEPS);
+  while (!limitPressed(limitPin)) {
+    if (axis.distanceToGo() == 0) {
+      axis.setMaxSpeed(savedSpeed);
+      return false;  // przejechano caly zakres bez trafienia
+    }
+    axis.run();
+  }
+  axis.stop();
+  while (axis.distanceToGo() != 0) axis.run();
+
+  // Faza 2: odjazd od krancowki.
+  axis.move((long)(-dir) * HOMING_BACKOFF_STEPS);
+  while (axis.distanceToGo() != 0) axis.run();
+
+  // Faza 3: wolny najazd - dokladny latch pozycji.
+  axis.setMaxSpeed(HOMING_LATCH_SPEED);
+  axis.move((long)dir * (HOMING_BACKOFF_STEPS * 4L));
+  while (!limitPressed(limitPin)) {
+    if (axis.distanceToGo() == 0) {
+      axis.setMaxSpeed(savedSpeed);
+      return false;
+    }
+    axis.run();
+  }
+  axis.setCurrentPosition(homeSteps);
+
+  // Odjazd na pozycje spoczynkowa tuz za krancowka.
+  axis.setMaxSpeed(savedSpeed);
+  axis.move((long)(-dir) * HOMING_BACKOFF_STEPS);
+  while (axis.distanceToGo() != 0) axis.run();
+
+  limitMonitoringEnabled = true;
+  return true;
+}
+
+bool homeZ() {
+  const bool ok = homeAxisBlocking(
+      axisZ, LIMIT_PIN_Z, HOMING_DIR_Z,
+      lroundf(Z_HOME_POS_MM * STEPS_PER_MM_Z), Z_MAX_SPEED);
+  homedZ = ok;
+  return ok;
+}
+
+bool homeJ1() {
+  const bool ok = homeAxisBlocking(
+      axisJ1, LIMIT_PIN_J1, HOMING_DIR_J1,
+      lroundf(J1_HOME_POS_DEG * STEPS_PER_DEG_J1), J1_MAX_SPEED);
+  homedJ1 = ok;
+  return ok;
+}
+
+bool homeJ2() {
+  if (!ELBOW_PRESENT) {
+    homedJ2 = true;
+    axisJ2.setCurrentPosition(0);
+    return true;
+  }
+  const bool ok = homeAxisBlocking(
+      axisJ2, LIMIT_PIN_J2, HOMING_DIR_J2,
+      lroundf(J2_HOME_POS_DEG * STEPS_PER_DEG_J2), J2_MAX_SPEED);
+  homedJ2 = ok;
+  return ok;
+}
+
+// ---------------------------------------------------------- komendy
+// Wyszukuje w komendzie parametr postaci "<litera><liczba>", np. X120.5.
+bool parseParam(const char* cmd, char key, float& out) {
+  for (const char* p = cmd; *p != '\0'; ++p) {
+    if (*p == key && (p == cmd || *(p - 1) == ' ')) {
+      out = atof(p + 1);
+      return true;
+    }
+  }
+  return false;
+}
+
+void printStatus() {
+  float x, y;
+  forwardKinematics(j1Degrees(), j2Degrees(), x, y);
+  Serial.print(F("OK STATE="));
+  switch (state) {
+    case State::IDLE: Serial.print(F("IDLE")); break;
+    case State::MOVING: Serial.print(F("MOVING")); break;
+    case State::HOMING: Serial.print(F("HOMING")); break;
+  }
+  Serial.print(F(" HOMED="));
+  Serial.print(allHomed() ? 1 : 0);
+  Serial.print(F(" X="));
+  Serial.print(x, 3);
+  Serial.print(F(" Y="));
+  Serial.print(y, 3);
+  Serial.print(F(" Z="));
+  Serial.print(zMillimeters(), 3);
+  Serial.print(F(" J1="));
+  Serial.print(j1Degrees(), 3);
+  Serial.print(F(" J2="));
+  Serial.print(j2Degrees(), 3);
+  Serial.print(F(" TOOL="));
+  Serial.println(toolDegrees(), 3);
+}
+
+void commandHome(const char* args) {
+  state = State::HOMING;
+  bool ok = true;
+  if (args[0] == '\0') {
+    ok = homeZ() && homeJ1() && homeJ2();  // Z pierwsze - unosi ramie
+  } else if (strcmp(args, "Z") == 0) {
+    ok = homeZ();
+  } else if (strcmp(args, "J1") == 0) {
+    ok = homeJ1();
+  } else if (strcmp(args, "J2") == 0) {
+    ok = homeJ2();
+  } else {
+    state = State::IDLE;
+    sendErr(F("BAD_CMD"), F("uzycie: HOME [J1|J2|Z]"));
+    return;
+  }
+  state = State::IDLE;
+  limitMonitoringEnabled = true;
+  if (ok) {
+    sendOk();
+  } else {
+    sendErr(F("HOMING_FAIL"), F("krancowka nieosiagnieta w zakresie ruchu"));
+  }
+}
+
+void commandMove(const char* args) {
+  if (!allHomed()) {
+    sendErr(F("NOT_HOMED"), F("wykonaj HOME przed ruchem"));
+    return;
+  }
+  float x = NAN, y = NAN, z = NAN, tool = NAN, elbowFlag = 1.0f;
+  const bool hasX = parseParam(args, 'X', x);
+  const bool hasY = parseParam(args, 'Y', y);
+  const bool hasZ = parseParam(args, 'Z', z);
+  const bool hasTool = parseParam(args, 'T', tool);
+  parseParam(args, 'E', elbowFlag);
+
+  if (!hasX || !hasY) {
+    sendErr(F("BAD_CMD"), F("uzycie: MOVE X<mm> Y<mm> [Z<mm>] [T<deg>] [E0|E1]"));
+    return;
+  }
+  if (insideColumnExclusion(x, y)) {
+    sendErr(F("EXCLUSION_ZONE"), F("punkt w strefie kolizji z kolumna Z"));
+    return;
+  }
+
+  float j1, j2;
+  if (!inverseKinematics(x, y, elbowFlag >= 0.5f, j1, j2)) {
+    sendErr(F("OUT_OF_REACH"), F("punkt poza zasiegiem ramienia"));
+    return;
+  }
+  // Bez fizycznego lokcia osiagalne sa tylko punkty z J2 = 0.
+  if (!ELBOW_PRESENT && fabsf(j2) > 0.05f) {
+    sendErr(F("OUT_OF_REACH"), F("lokiec wylaczony - punkt nieosiagalny"));
+    return;
+  }
+  if (!jointsWithinLimits(j1, j2)) {
+    sendErr(F("JOINT_LIMIT"), F("rozwiazanie IK poza limitami stawow"));
+    return;
+  }
+  if (hasZ && (z < Z_MIN_MM || z > Z_MAX_MM)) {
+    sendErr(F("JOINT_LIMIT"), F("Z poza zakresem"));
+    return;
+  }
+  if (hasTool && (tool < TOOL_MIN_DEG || tool > TOOL_MAX_DEG)) {
+    sendErr(F("JOINT_LIMIT"), F("TOOL poza zakresem"));
+    return;
+  }
+
+  axisJ1.moveTo(lroundf(j1 * STEPS_PER_DEG_J1));
+  if (ELBOW_PRESENT) axisJ2.moveTo(lroundf(j2 * STEPS_PER_DEG_J2));
+  if (hasZ) axisZ.moveTo(lroundf(z * STEPS_PER_MM_Z));
+  if (hasTool) axisTool.moveTo(lroundf(tool * STEPS_PER_DEG_TOOL));
+
+  state = State::MOVING;
+  motionDoneReported = false;
+  Serial.print(F("OK J1="));
+  Serial.print(j1, 3);
+  Serial.print(F(" J2="));
+  Serial.println(j2, 3);
+}
+
+void commandJog(const char* args) {
+  if (!allHomed()) {
+    sendErr(F("NOT_HOMED"), F("wykonaj HOME przed ruchem"));
+    return;
+  }
+  char axisName[8];
+  float value;
+  if (sscanf(args, "%7s %f", axisName, &value) != 2) {
+    sendErr(F("BAD_CMD"), F("uzycie: JOG J1|J2|Z|TOOL <wartosc>"));
+    return;
+  }
+  if (strcmp(axisName, "J1") == 0) {
+    if (value < J1_MIN_DEG || value > J1_MAX_DEG) {
+      sendErr(F("JOINT_LIMIT"), F("J1 poza zakresem"));
+      return;
+    }
+    axisJ1.moveTo(lroundf(value * STEPS_PER_DEG_J1));
+  } else if (strcmp(axisName, "J2") == 0) {
+    if (!ELBOW_PRESENT) {
+      sendErr(F("AXIS_DISABLED"), F("lokiec wylaczony (ELBOW_PRESENT=0)"));
+      return;
+    }
+    if (value < J2_MIN_DEG || value > J2_MAX_DEG) {
+      sendErr(F("JOINT_LIMIT"), F("J2 poza zakresem"));
+      return;
+    }
+    axisJ2.moveTo(lroundf(value * STEPS_PER_DEG_J2));
+  } else if (strcmp(axisName, "Z") == 0) {
+    if (value < Z_MIN_MM || value > Z_MAX_MM) {
+      sendErr(F("JOINT_LIMIT"), F("Z poza zakresem"));
+      return;
+    }
+    axisZ.moveTo(lroundf(value * STEPS_PER_MM_Z));
+  } else if (strcmp(axisName, "TOOL") == 0) {
+    if (value < TOOL_MIN_DEG || value > TOOL_MAX_DEG) {
+      sendErr(F("JOINT_LIMIT"), F("TOOL poza zakresem"));
+      return;
+    }
+    axisTool.moveTo(lroundf(value * STEPS_PER_DEG_TOOL));
+  } else {
+    sendErr(F("BAD_CMD"), F("nieznana os (J1|J2|Z|TOOL)"));
+    return;
+  }
+  state = State::MOVING;
+  motionDoneReported = false;
+  sendOk();
+}
+
+void commandIkOnly(const char* args) {
+  float x = NAN, y = NAN, elbowFlag = 1.0f;
+  if (!parseParam(args, 'X', x) || !parseParam(args, 'Y', y)) {
+    sendErr(F("BAD_CMD"), F("uzycie: IK X<mm> Y<mm> [E0|E1]"));
+    return;
+  }
+  parseParam(args, 'E', elbowFlag);
+  float j1, j2;
+  if (!inverseKinematics(x, y, elbowFlag >= 0.5f, j1, j2)) {
+    sendErr(F("OUT_OF_REACH"), F("punkt poza zasiegiem ramienia"));
+    return;
+  }
+  Serial.print(F("OK J1="));
+  Serial.print(j1, 4);
+  Serial.print(F(" J2="));
+  Serial.print(j2, 4);
+  Serial.print(F(" REACHABLE="));
+  Serial.println(jointsWithinLimits(j1, j2) && !insideColumnExclusion(x, y) ? 1 : 0);
+}
+
+void processCommand(char* cmd) {
+  // Normalizacja: wielkie litery.
+  for (char* p = cmd; *p != '\0'; ++p) *p = toupper(*p);
+
+  if (state == State::MOVING && anyAxisMoving() &&
+      strncmp(cmd, "STOP", 4) != 0 && strncmp(cmd, "ESTOP", 5) != 0 &&
+      strncmp(cmd, "STATUS", 6) != 0 && strncmp(cmd, "PING", 4) != 0) {
+    sendErr(F("BUSY"), F("ruch w toku - uzyj STOP lub poczekaj na DONE"));
+    return;
+  }
+
+  if (strcmp(cmd, "PING") == 0) {
+    Serial.println(F("OK PONG"));
+  } else if (strcmp(cmd, "VERSION") == 0) {
+    Serial.print(F("OK "));
+    Serial.println(F(FW_VERSION));
+  } else if (strcmp(cmd, "STATUS") == 0) {
+    printStatus();
+  } else if (strncmp(cmd, "HOME", 4) == 0) {
+    const char* args = cmd + 4;
+    while (*args == ' ') ++args;
+    commandHome(args);
+  } else if (strncmp(cmd, "MOVE ", 5) == 0) {
+    commandMove(cmd + 5);
+  } else if (strncmp(cmd, "JOG ", 4) == 0) {
+    commandJog(cmd + 4);
+  } else if (strncmp(cmd, "IK ", 3) == 0) {
+    commandIkOnly(cmd + 3);
+  } else if (strcmp(cmd, "STOP") == 0) {
+    stopAllRamped();
+    sendOk();
+  } else if (strcmp(cmd, "ESTOP") == 0) {
+    emergencyStop();
+    sendOk();
+  } else if (strcmp(cmd, "ENABLE") == 0) {
+    enableAll();
+    sendOk();
+  } else if (strcmp(cmd, "DISABLE") == 0) {
+    disableAll();
+    homedJ1 = homedJ2 = homedZ = false;  // pozycja niepewna po odlaczeniu
+    sendOk();
+  } else {
+    sendErr(F("BAD_CMD"), F("nieznana komenda"));
+  }
+}
+
+void handleSerial() {
+  while (Serial.available() > 0) {
+    const char incoming = (char)Serial.read();
+    if (incoming == '\n' || incoming == '\r') {
+      if (lineLength > 0) {
+        lineBuffer[lineLength] = '\0';
+        processCommand(lineBuffer);
+        lineLength = 0;
+      }
+      continue;
+    }
+    if (lineLength < sizeof(lineBuffer) - 1) {
+      lineBuffer[lineLength++] = incoming;
+    }
+  }
+}
+
+void checkLimitFlags() {
+  if (limitHitJ1 || limitHitJ2 || limitHitZ) {
+    const bool j1 = limitHitJ1, j2 = limitHitJ2, z = limitHitZ;
+    limitHitJ1 = limitHitJ2 = limitHitZ = false;
+    emergencyStop();
+    Serial.print(F("ERR LIMIT_HIT osie:"));
+    if (j1) Serial.print(F(" J1"));
+    if (j2) Serial.print(F(" J2"));
+    if (z) Serial.print(F(" Z"));
+    Serial.println(F(" - wymagany ponowny HOME"));
+  }
+}
+
+void setupAxis(AccelStepper& axis, uint8_t enablePin, float maxSpeed, float accel) {
   axis.setEnablePin(enablePin);
+  // TB6600: ENA aktywny w stanie niskim.
   axis.setPinsInverted(false, false, true);
   axis.setMaxSpeed(maxSpeed);
-  axis.setAcceleration(acceleration);
+  axis.setAcceleration(accel);
   axis.disableOutputs();
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(SERIAL_BAUD);
 
-  pinMode(Pins::Z_HOME, INPUT_PULLUP);
-  pinMode(Pins::SHOULDER_HOME, INPUT_PULLUP);
-  pinMode(Pins::ELBOW_HOME, INPUT_PULLUP);
+  pinMode(LIMIT_PIN_J1, INPUT_PULLUP);
+  pinMode(LIMIT_PIN_J2, INPUT_PULLUP);
+  pinMode(LIMIT_PIN_Z, INPUT_PULLUP);
 
-  setupAxis(zAxis, Pins::Z_ENABLE, Motion::Z_MAX_SPEED, Motion::Z_ACCELERATION);
-  setupAxis(shoulderAxis, Pins::SHOULDER_ENABLE, Motion::SHOULDER_MAX_SPEED, Motion::SHOULDER_ACCELERATION);
-  setupAxis(elbowAxis, Pins::ELBOW_ENABLE, Motion::ELBOW_MAX_SPEED, Motion::ELBOW_ACCELERATION);
-  setupAxis(toolAxis, Pins::TOOL_ENABLE, Motion::TOOL_MAX_SPEED, Motion::TOOL_ACCELERATION);
+  attachInterrupt(digitalPinToInterrupt(LIMIT_PIN_J1), isrLimitJ1,
+                  LIMIT_ACTIVE_STATE == LOW ? FALLING : RISING);
+  attachInterrupt(digitalPinToInterrupt(LIMIT_PIN_J2), isrLimitJ2,
+                  LIMIT_ACTIVE_STATE == LOW ? FALLING : RISING);
+  attachInterrupt(digitalPinToInterrupt(LIMIT_PIN_Z), isrLimitZ,
+                  LIMIT_ACTIVE_STATE == LOW ? FALLING : RISING);
 
-  enableAllAxes();
+  setupAxis(axisJ1, PIN_J1_ENABLE, J1_MAX_SPEED, J1_ACCEL);
+  setupAxis(axisJ2, PIN_J2_ENABLE, J2_MAX_SPEED, J2_ACCEL);
+  setupAxis(axisZ, PIN_Z_ENABLE, Z_MAX_SPEED, Z_ACCEL);
+  setupAxis(axisTool, PIN_TOOL_ENABLE, TOOL_MAX_SPEED, TOOL_ACCEL);
 
-  Serial.println(F("SCARA controller ready (4 axes: Z, SHOULDER, ELBOW, TOOL)."));
-  if (!ELBOW_PRESENT) {
-    Serial.println(F("ELBOW disabled in firmware (ELBOW_PRESENT = false)."));
-  }
-  Serial.println(F("Commands: STATUS, HOME Z|SHOULDER|ELBOW, MOVE Z <mm>, "
-                   "MOVE SHOULDER|ELBOW|TOOL <deg>, STOP, ENABLE, DISABLE"));
+  enableAll();
+  limitMonitoringEnabled = true;
+
+  Serial.print(F("READY "));
+  Serial.println(F(FW_VERSION));
 }
 
 void loop() {
   handleSerial();
   runAllAxes();
-}
+  checkLimitFlags();
 
-void enableAllAxes() {
-  zAxis.enableOutputs();
-  shoulderAxis.enableOutputs();
-  if (ELBOW_PRESENT) {
-    elbowAxis.enableOutputs();
-  }
-  toolAxis.enableOutputs();
-}
-
-void disableAllAxes() {
-  zAxis.disableOutputs();
-  shoulderAxis.disableOutputs();
-  elbowAxis.disableOutputs();
-  toolAxis.disableOutputs();
-}
-
-void runAllAxes() {
-  zAxis.run();
-  shoulderAxis.run();
-  if (ELBOW_PRESENT) {
-    elbowAxis.run();
-  }
-  toolAxis.run();
-}
-
-bool isHomeTriggered(uint8_t pin) {
-  // Optical slot sensors commonly pull the signal low when blocked.
-  return digitalRead(pin) == LOW;
-}
-
-// Generic homing helper: jog toward the endstop, zero the position, restore speed.
-void homeAxis(AccelStepper& axis, uint8_t homePin, float runSpeed,
-              const __FlashStringHelper* name) {
-  Serial.print(F("Homing "));
-  Serial.print(name);
-  Serial.println(F(" axis..."));
-
-  axis.setMaxSpeed(Motion::HOMING_SPEED);
-  axis.moveTo(Motion::HOMING_SEARCH_TRAVEL_STEPS);
-
-  while (!isHomeTriggered(homePin) && axis.distanceToGo() != 0) {
-    axis.run();
-  }
-
-  axis.stop();
-  axis.setCurrentPosition(0);
-  axis.setMaxSpeed(runSpeed);
-
-  if (isHomeTriggered(homePin)) {
-    Serial.print(name);
-    Serial.println(F(" axis homed."));
-  } else {
-    Serial.print(name);
-    Serial.println(F(" homing stopped: sensor not reached."));
-  }
-}
-
-void homeZAxis() {
-  homeAxis(zAxis, Pins::Z_HOME, Motion::Z_MAX_SPEED, F("Z"));
-}
-
-void homeShoulderAxis() {
-  homeAxis(shoulderAxis, Pins::SHOULDER_HOME, Motion::SHOULDER_MAX_SPEED, F("shoulder"));
-}
-
-void homeElbowAxis() {
-  if (!ELBOW_PRESENT) {
-    Serial.println(F("ELBOW disabled (ELBOW_PRESENT = false), homing skipped."));
-    return;
-  }
-  homeAxis(elbowAxis, Pins::ELBOW_HOME, Motion::ELBOW_MAX_SPEED, F("elbow"));
-}
-
-void moveZToMillimeters(float millimeters) {
-  zAxis.moveTo(lround(millimeters * Mechanics::Z_STEPS_PER_MM));
-}
-
-void moveShoulderToDegrees(float degrees) {
-  shoulderAxis.moveTo(lround(degrees * Mechanics::SHOULDER_STEPS_PER_DEGREE));
-}
-
-void moveElbowToDegrees(float degrees) {
-  if (!ELBOW_PRESENT) {
-    Serial.println(F("ELBOW disabled (ELBOW_PRESENT = false), move ignored."));
-    return;
-  }
-  elbowAxis.moveTo(lround(degrees * Mechanics::ELBOW_STEPS_PER_DEGREE));
-}
-
-void moveToolToDegrees(float degrees) {
-  toolAxis.moveTo(lround(degrees * Mechanics::TOOL_STEPS_PER_DEGREE));
-}
-
-void stopMotion() {
-  zAxis.stop();
-  shoulderAxis.stop();
-  elbowAxis.stop();
-  toolAxis.stop();
-}
-
-void printStatus() {
-  Serial.print(F("Z steps: "));
-  Serial.print(zAxis.currentPosition());
-  Serial.print(F(" | Shoulder steps: "));
-  Serial.print(shoulderAxis.currentPosition());
-  Serial.print(F(" | Elbow steps: "));
-  Serial.print(elbowAxis.currentPosition());
-  Serial.print(F(" | Tool steps: "));
-  Serial.println(toolAxis.currentPosition());
-}
-
-void handleSerial() {
-  while (Serial.available() > 0) {
-    const char incoming = Serial.read();
-
-    if (incoming == '\n' || incoming == '\r') {
-      if (serialLine.length() > 0) {
-        processCommand(serialLine);
-        serialLine = "";
-      }
-      continue;
-    }
-
-    serialLine += incoming;
-  }
-}
-
-void processCommand(String command) {
-  command.trim();
-  command.toUpperCase();
-
-  if (command == "STATUS") {
-    printStatus();
-  } else if (command == "HOME Z") {
-    homeZAxis();
-  } else if (command == "HOME SHOULDER") {
-    homeShoulderAxis();
-  } else if (command == "HOME ELBOW") {
-    homeElbowAxis();
-  } else if (command.startsWith("MOVE Z ")) {
-    moveZToMillimeters(command.substring(7).toFloat());
-  } else if (command.startsWith("MOVE SHOULDER ")) {
-    moveShoulderToDegrees(command.substring(14).toFloat());
-  } else if (command.startsWith("MOVE ELBOW ")) {
-    moveElbowToDegrees(command.substring(11).toFloat());
-  } else if (command.startsWith("MOVE TOOL ")) {
-    moveToolToDegrees(command.substring(10).toFloat());
-  } else if (command == "STOP") {
-    stopMotion();
-  } else if (command == "DISABLE") {
-    disableAllAxes();
-  } else if (command == "ENABLE") {
-    enableAllAxes();
-  } else {
-    Serial.print(F("Unknown command: "));
-    Serial.println(command);
+  if (state == State::MOVING && !anyAxisMoving() && !motionDoneReported) {
+    state = State::IDLE;
+    motionDoneReported = true;
+    Serial.println(F("DONE"));
   }
 }

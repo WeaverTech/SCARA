@@ -10,7 +10,8 @@ Konwencja:
   - Wysokosc Z pochodzi bezposrednio z osi prismatic (niezalezna od planaru).
 
 Konwersje na kroki silnikow sa spojne ze stalymi z firmware
-(src/main/main.ino): mikrokrok 1/16, NEMA 17 = 200 krokow, cykloidalna 20:1.
+(src/main/config.h): mikrokrok 1/16, NEMA 17 = 200 krokow,
+cykloidalna 20:1 (bark) i 14:1 (lokiec), sruba Z 400 krokow/mm.
 """
 
 from __future__ import annotations
@@ -19,22 +20,25 @@ import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-# --- Stale napedu (zgodne z firmware) ---
+# --- Stale napedu (zgodne z firmware src/main/config.h) ---
 MOTOR_STEPS_PER_REV = 200.0
 MICROSTEPS = 16.0
 STEPS_PER_REV = MOTOR_STEPS_PER_REV * MICROSTEPS  # 3200
 
-JOINT_GEAR_RATIO = 20.0  # przekladnia cykloidalna barku i lokcia
-JOINT_STEPS_PER_DEG = (STEPS_PER_REV * JOINT_GEAR_RATIO) / 360.0  # 177.7778
+J1_GEAR_RATIO = 20.0  # przekladnia cykloidalna barku
+J2_GEAR_RATIO = 14.0  # przekladnia cykloidalna lokcia
+J1_STEPS_PER_DEG = (STEPS_PER_REV * J1_GEAR_RATIO) / 360.0  # 177.7778
+J2_STEPS_PER_DEG = (STEPS_PER_REV * J2_GEAR_RATIO) / 360.0  # 124.4444
 
-# Os Z - pasek GT2 (TODO: potwierdzic liczbe zebow kola)
-Z_BELT_PITCH_MM = 2.0
-Z_PULLEY_TEETH = 20.0
-Z_STEPS_PER_MM = STEPS_PER_REV / (Z_PULLEY_TEETH * Z_BELT_PITCH_MM)  # 80
+# Os Z - sruba napedowa.
+Z_STEPS_PER_MM = 400.0
 
 # Efektor - pasek (TODO: potwierdzic przelozenie)
 TOOL_BELT_RATIO = 1.0
 TOOL_STEPS_PER_DEG = (STEPS_PER_REV * TOOL_BELT_RATIO) / 360.0
+
+# Strefa wykluczenia wokol kolumny Z (m) - kolumna w (-z_offset, 0).
+Z_COL_EXCLUSION_R = 0.045
 
 
 @dataclass
@@ -64,14 +68,15 @@ class Pose:
 class ScaraKinematics:
     """Model kinematyczny SCARA. Dlugosci w metrach, katy w radianach."""
 
-    l1: float = 0.150
-    l2: float = 0.150
+    # Zmierzone w CAD: L1 = 139.928 mm, L2 = 140.000 mm.
+    l1: float = 0.139928
+    l2: float = 0.140000
     z_offset: float = 0.165
     # Limity (rad / m) - spojne z URDF.
     theta1_limits: Tuple[float, float] = (-math.pi, math.pi)
     theta2_limits: Tuple[float, float] = (-2.6180, 2.6180)
     theta_tool_limits: Tuple[float, float] = (-math.pi, math.pi)
-    z_limits: Tuple[float, float] = (0.0, 0.30)
+    z_limits: Tuple[float, float] = (0.0, 0.15)
 
     # ------------------------------------------------------------------ FK
     def forward(self, q: JointState) -> Pose:
@@ -125,14 +130,20 @@ class ScaraKinematics:
             and _in_range(q.theta_tool, self.theta_tool_limits)
         )
 
+    # ------------------------------------------------ strefa wykluczenia
+    def in_column_exclusion(self, x: float, y: float) -> bool:
+        """Czy punkt (m) lezy w strefie kolizji z kolumna Z."""
+        dx = x + self.z_offset
+        return (dx * dx + y * y) < Z_COL_EXCLUSION_R ** 2
+
     # ---------------------------------------------------- mapowanie krokow
     @staticmethod
     def joint_to_steps(q: JointState) -> dict:
         """Mapuje stan osi na kroki silnikow (jak w firmware)."""
         return {
             "z": round(q.z * 1000.0 * Z_STEPS_PER_MM),
-            "shoulder": round(math.degrees(q.theta1) * JOINT_STEPS_PER_DEG),
-            "elbow": round(math.degrees(q.theta2) * JOINT_STEPS_PER_DEG),
+            "shoulder": round(math.degrees(q.theta1) * J1_STEPS_PER_DEG),
+            "elbow": round(math.degrees(q.theta2) * J2_STEPS_PER_DEG),
             "tool": round(math.degrees(q.theta_tool) * TOOL_STEPS_PER_DEG),
         }
 
@@ -167,8 +178,9 @@ if __name__ == "__main__":
     kin = ScaraKinematics()
     print("=== SCARA - parametry ===")
     print(f"L1={kin.l1} m, L2={kin.l2} m, Z_offset={kin.z_offset} m")
-    print(f"JOINT_STEPS_PER_DEG = {JOINT_STEPS_PER_DEG:.4f}")
-    print(f"Z_STEPS_PER_MM      = {Z_STEPS_PER_MM:.4f}")
+    print(f"J1_STEPS_PER_DEG = {J1_STEPS_PER_DEG:.4f}")
+    print(f"J2_STEPS_PER_DEG = {J2_STEPS_PER_DEG:.4f}")
+    print(f"Z_STEPS_PER_MM   = {Z_STEPS_PER_MM:.4f}")
     print()
 
     q = JointState(z=0.1, theta1=math.radians(30), theta2=math.radians(45),

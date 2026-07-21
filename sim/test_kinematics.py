@@ -5,7 +5,8 @@ import math
 import pytest
 
 from kinematics import (
-    JOINT_STEPS_PER_DEG,
+    J1_STEPS_PER_DEG,
+    J2_STEPS_PER_DEG,
     Z_STEPS_PER_MM,
     JointState,
     Pose,
@@ -19,10 +20,33 @@ def kin() -> ScaraKinematics:
 
 
 def test_constants_match_firmware():
-    # (200 * 16 * 20) / 360 = 177.7778
-    assert JOINT_STEPS_PER_DEG == pytest.approx(177.7778, abs=1e-3)
-    # (200 * 16) / (20 * 2 mm) = 80
-    assert Z_STEPS_PER_MM == pytest.approx(80.0, abs=1e-6)
+    # (200 * 16 * 20) / 360 = 177.7778 (bark, cykloidalna 20:1)
+    assert J1_STEPS_PER_DEG == pytest.approx(177.7778, abs=1e-3)
+    # (200 * 16 * 14) / 360 = 124.4444 (lokiec, cykloidalna 14:1)
+    assert J2_STEPS_PER_DEG == pytest.approx(124.4444, abs=1e-3)
+    # Sruba napedowa osi Z.
+    assert Z_STEPS_PER_MM == pytest.approx(400.0, abs=1e-6)
+
+
+def test_geometry_matches_cad():
+    kin = ScaraKinematics()
+    assert kin.l1 == pytest.approx(0.139928, abs=1e-9)
+    assert kin.l2 == pytest.approx(0.140000, abs=1e-9)
+    # MAX_REACH = L1 + L2 = 279.928 mm, MIN_REACH = |L1 - L2| = 0.072 mm
+    assert (kin.l1 + kin.l2) * 1000.0 == pytest.approx(279.928, abs=1e-6)
+    assert abs(kin.l1 - kin.l2) * 1000.0 == pytest.approx(0.072, abs=1e-6)
+
+
+def test_column_exclusion_zone():
+    kin = ScaraKinematics()
+    # Punkt w srodku kolumny (x = -z_offset) - zabroniony.
+    assert kin.in_column_exclusion(-kin.z_offset, 0.0)
+    # Punkt 44 mm od osi kolumny - nadal w strefie (promien 45 mm).
+    assert kin.in_column_exclusion(-kin.z_offset + 0.044, 0.0)
+    # Punkt 46 mm od osi kolumny - poza strefa.
+    assert not kin.in_column_exclusion(-kin.z_offset + 0.046, 0.0)
+    # Typowy punkt roboczy przed robotem - poza strefa.
+    assert not kin.in_column_exclusion(0.200, 0.050)
 
 
 @pytest.mark.parametrize(
@@ -84,10 +108,12 @@ def test_elbow_up_down_differ(kin):
 
 
 def test_step_mapping(kin):
-    q = JointState(z=0.010, theta1=math.radians(1.0), theta2=0.0, theta_tool=0.0)
+    q = JointState(z=0.010, theta1=math.radians(1.0),
+                   theta2=math.radians(1.0), theta_tool=0.0)
     steps = kin.joint_to_steps(q)
     assert steps["z"] == round(10.0 * Z_STEPS_PER_MM)  # 10 mm
-    assert steps["shoulder"] == round(JOINT_STEPS_PER_DEG)  # 1 deg
+    assert steps["shoulder"] == round(J1_STEPS_PER_DEG)  # 1 deg (20:1)
+    assert steps["elbow"] == round(J2_STEPS_PER_DEG)  # 1 deg (14:1)
 
 
 def test_within_limits(kin):
