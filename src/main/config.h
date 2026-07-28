@@ -83,9 +83,19 @@
 #define TOOL_MAX_SPEED 1200.0f
 #define TOOL_ACCEL 600.0f
 
+// --- GRIPPER (serwo modelarskie SG90, sygnal PWM) ---
+#define GRIPPER_SERVO_PIN 44
+#define GRIPPER_OPEN_DEG 20    // kat serwa: gripper otwarty
+#define GRIPPER_CLOSED_DEG 110 // kat serwa: gripper zamkniety
+
+// --- PREDKOSC GLOBALNA ---
+#define SPEED_PERCENT_MIN 10
+#define SPEED_PERCENT_MAX 100
+#define SPEED_PERCENT_DEFAULT 100
+
 // --- KOMUNIKACJA ---
 #define SERIAL_BAUD 115200
-#define FW_VERSION "SCARA-FW 2.0"
+#define FW_VERSION "SCARA-FW 2.1"
 
 // Prototyp bez drugiej przekladni cykloidalnej: ustaw 0, aby pominac J2.
 #define ELBOW_PRESENT 1

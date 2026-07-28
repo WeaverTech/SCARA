@@ -181,6 +181,14 @@ class ScaraClient:
             for key, _, value in (tok.partition("=") for tok in reply.split())
         }
 
+    def set_speed(self, percent: int) -> None:
+        """Globalny procent predkosci wszystkich osi (10-100)."""
+        self._command(f"SPEED {int(percent)}")
+
+    def set_grip(self, closed: bool) -> None:
+        """Gripper (serwo SG90): True = zamkniety, False = otwarty."""
+        self._command(f"GRIP {1 if closed else 0}")
+
     def stop(self) -> None:
         self._command("STOP")
 

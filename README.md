@@ -98,11 +98,21 @@ Wybrane elementy z listy materialowej (BOM):
 +-- docs/                 # Schematy, notatki montazowe i kalibracja
 +-- host/                 # Klient Pythona (pyserial) dla firmware
 +-- sim/                  # Kinematyka (URDF) i symulacja (PyBullet)
++-- webapp/               # Aplikacja webowa: GUI, punkty, programy, symulator
 `-- src/
     `-- main/
         +-- config.h      # Geometria, przeliczniki, piny, limity
         `-- main.ino      # Firmware Arduino Mega (IK, homing, protokol)
 ```
+
+## Aplikacja webowa (teach pendant)
+
+W [`webapp/`](webapp/) znajduje sie lokalna aplikacja webowa w stylu RC+:
+jog, pamiec punktow (Teach), edytor programow z interpolacja liniowa,
+sterowanie predkoscia i gripperem (serwo SG90), wizualizacja 2D na zywo
+oraz wbudowany symulator robota (praca bez sprzetu, port `sim`).
+Uruchomienie: `cd webapp && pip install -r requirements.txt &&
+uvicorn backend.main:app --port 8000`, GUI pod `http://localhost:8000`.
 
 ## Kinematyka i symulacja
 

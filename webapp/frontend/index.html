@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SCARA Web Control</title>
+<style>
+:root {
+  --bg: #0f1419; --panel: #171e26; --panel2: #1d2630; --border: #2a3644;
+  --text: #dbe4ee; --muted: #8296ab; --accent: #38b6ff; --ok: #34d17b;
+  --warn: #ffb347; --err: #ff5b5b; --radius: 10px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 14px/1.45 "Segoe UI", system-ui, sans-serif; min-height: 100vh;
+}
+header {
+  display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10; flex-wrap: wrap;
+}
+header h1 { font-size: 17px; font-weight: 600; margin-right: 8px; }
+header h1 span { color: var(--accent); }
+.badge {
+  padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;
+  background: var(--panel2); border: 1px solid var(--border); color: var(--muted);
+}
+.badge.on { color: var(--ok); border-color: var(--ok); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+select, input[type=text], input[type=number] {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font-size: 13px;
+}
+input[type=number] { width: 76px; }
+button {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #06202f; font-weight: 600; }
+button.good { background: var(--ok); border-color: var(--ok); color: #06301a; font-weight: 600; }
+button.danger { background: var(--err); border-color: var(--err); color: #fff; font-weight: 700; }
+button.warnb { background: var(--warn); border-color: var(--warn); color: #3a2600; font-weight: 700; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+main {
+  display: grid; gap: 12px; padding: 12px 16px;
+  grid-template-columns: 290px 1fr 330px;
+  grid-template-areas: "jog viz points" "jog viz programs" "console console console";
+}
+@media (max-width: 1100px) {
+  main { grid-template-columns: 1fr; grid-template-areas: "viz" "jog" "points" "programs" "console"; }
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px;
+}
+.panel h2 {
+  font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); margin-bottom: 10px;
+}
+#panel-jog { grid-area: jog; } #panel-viz { grid-area: viz; }
+#panel-points { grid-area: points; } #panel-programs { grid-area: programs; }
+#panel-console { grid-area: console; }
+.jog-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.jog-row .axis-name { width: 44px; font-weight: 600; }
+.jog-row .axis-val { width: 84px; text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
+.jog-row button { width: 40px; font-weight: 700; }
+.steps-select { display: flex; gap: 4px; margin: 8px 0; }
+.steps-select button.sel { background: var(--accent); color: #06202f; border-color: var(--accent); }
+.subsection { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
+.inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+#canvas-wrap { position: relative; }
+canvas { width: 100%; background: #0a0e12; border-radius: 8px; border: 1px solid var(--border); display: block; }
+#pos-readout {
+  display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px;
+  font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted);
+}
+#pos-readout b { color: var(--text); }
+ul.list { list-style: none; max-height: 220px; overflow-y: auto; }
+ul.list li {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-radius: 6px; margin-bottom: 4px; background: var(--panel2);
+}
+ul.list li .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ul.list li small { color: var(--muted); }
+ul.list li.active-step { outline: 2px solid var(--accent); }
+ul.list li button { padding: 2px 8px; font-size: 12px; }
+#console-log {
+  height: 150px; overflow-y: auto; background: #0a0e12; border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px; font: 12px/1.5 ui-monospace, monospace;
+}
+#console-log .tx { color: var(--accent); }
+#console-log .rx { color: var(--muted); }
+#console-log .err { color: var(--err); }
+#toast {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  background: var(--err); color: #fff; padding: 10px 18px; border-radius: 8px;
+  font-weight: 600; display: none; z-index: 50; max-width: 80vw;
+}
+#toast.ok { background: var(--ok); color: #06301a; }
+.speed-wrap { display: flex; align-items: center; gap: 8px; }
+input[type=range] { accent-color: var(--accent); }
+.prog-status { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SCARA <span>Web Control</span></h1>
+  <select id="port-select"></select>
+  <button id="btn-refresh-ports" title="Odśwież listę portów">&#8635;</button>
+  <button id="btn-connect" class="primary">Połącz</button>
+  <span class="badge" id="badge-conn">ROZŁĄCZONY</span>
+  <span class="badge" id="badge-homed">HOMED: NIE</span>
+  <span class="badge" id="badge-state">—</span>
+  <span class="badge" id="badge-grip">GRIPPER: OTWARTY</span>
+  <div class="speed-wrap">
+    <span style="color:var(--muted);font-size:12px">Prędkość</span>
+    <input type="range" id="speed-slider" min="10" max="100" value="100" step="5">
+    <span id="speed-value" style="width:42px">100%</span>
+  </div>
+  <span style="flex:1"></span>
+  <button id="btn-stop" class="warnb">STOP</button>
+  <button id="btn-estop" class="danger">E-STOP</button>
+</header>
+
+<main>
+  <section class="panel" id="panel-jog">
+    <h2>Sterowanie ręczne</h2>
+    <button id="btn-home" class="good" style="width:100%;margin-bottom:10px">HOME (Z &rarr; J1 &rarr; J2)</button>
+
+    <div><b>Jog osiowy</b></div>
+    <div class="steps-select" id="joint-steps">
+      <button data-step="0.1">0.1</button><button data-step="1" class="sel">1</button>
+      <button data-step="10">10</button><span style="color:var(--muted);align-self:center">°/mm</span>
+    </div>
+    <div class="jog-row"><span class="axis-name">J1</span>
+      <button data-jog="J1" data-dir="-1">&minus;</button>
+      <button data-jog="J1" data-dir="1">+</button>
+      <span class="axis-val" id="val-j1">—</span></div>
+    <div class="jog-row"><span class="axis-name">J2</span>
+      <button data-jog="J2" data-dir="-1">&minus;</button>
+      <button data-jog="J2" data-dir="1">+</button>
+      <span class="axis-val" id="val-j2">—</span></div>
+    <div class="jog-row"><span class="axis-name">Z</span>
+      <button data-jog="Z" data-dir="-1">&minus;</button>
+      <button data-jog="Z" data-dir="1">+</button>
+      <span class="axis-val" id="val-z">—</span></div>
+    <div class="jog-row"><span class="axis-name">TOOL</span>
+      <button data-jog="TOOL" data-dir="-1">&minus;</button>
+      <button data-jog="TOOL" data-dir="1">+</button>
+      <span class="axis-val" id="val-tool">—</span></div>
+
+    <div class="subsection">
+      <div><b>Jog kartezjański (XY)</b></div>
+      <div class="steps-select" id="cart-steps">
+        <button data-step="0.5">0.5</button><button data-step="5" class="sel">5</button>
+        <button data-step="20">20</button><span style="color:var(--muted);align-self:center">mm</span>
+      </div>
+      <div class="jog-row"><span class="axis-name">X</span>
+        <button data-cart="x" data-dir="-1">&minus;</button>
+        <button data-cart="x" data-dir="1">+</button>
+        <span class="axis-val" id="val-x">—</span></div>
+      <div class="jog-row"><span class="axis-name">Y</span>
+        <button data-cart="y" data-dir="-1">&minus;</button>
+        <button data-cart="y" data-dir="1">+</button>
+        <span class="axis-val" id="val-y">—</span></div>
+      <label class="inline" style="margin-top:6px">
+        <input type="checkbox" id="elbow-up" checked> łokieć "up"
+      </label>
+    </div>
+
+    <div class="subsection inline">
+      <b>Gripper:</b>
+      <button id="btn-grip-open">Otwórz</button>
+      <button id="btn-grip-close">Zamknij</button>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-viz">
+    <h2>Wizualizacja (widok z góry)</h2>
+    <div id="canvas-wrap"><canvas id="canvas" width="900" height="640"></canvas></div>
+    <div id="pos-readout">
+      <span>X: <b id="ro-x">—</b> mm</span><span>Y: <b id="ro-y">—</b> mm</span>
+      <span>Z: <b id="ro-z">—</b> mm</span><span>J1: <b id="ro-j1">—</b>°</span>
+      <span>J2: <b id="ro-j2">—</b>°</span><span>TOOL: <b id="ro-tool">—</b>°</span>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-points">
+    <h2>Pamięć punktów</h2>
+    <div class="inline" style="margin-bottom:8px">
+      <input type="text" id="teach-name" placeholder="nazwa punktu, np. pickup" style="flex:1">
+      <button id="btn-teach" class="primary">Teach</button>
+    </div>
+    <ul class="list" id="points-list"></ul>
+  </section>
+
+  <section class="panel" id="panel-programs">
+    <h2>Programy</h2>
+    <div class="inline" style="margin-bottom:8px">
+      <input type="text" id="prog-name" placeholder="nazwa programu" style="flex:1">
+      <label>powt. <input type="number" id="prog-repeat" min="1" max="10000" value="1" style="width:64px"></label>
+    </div>
+    <div class="inline" style="margin-bottom:8px">
+      <select id="step-type">
+        <option value="move_joint">Ruch do punktu (joint)</option>
+        <option value="move_linear">Ruch liniowy do punktu</option>
+        <option value="move_z">Z do wysokości [mm]</option>
+        <option value="tool">TOOL do kąta [°]</option>
+        <option value="grip_close">Gripper: zamknij</option>
+        <option value="grip_open">Gripper: otwórz</option>
+        <option value="wait">Czekaj [s]</option>
+      </select>
+      <select id="step-point" style="display:none"></select>
+      <input type="number" id="step-value" step="0.1" value="0" style="display:none">
+      <button id="btn-add-step">+ krok</button>
+    </div>
+    <ul class="list" id="steps-list"></ul>
+    <div class="inline" style="margin-top:8px">
+      <button id="btn-save-prog" class="primary">Zapisz program</button>
+    </div>
+    <div class="subsection">
+      <div class="inline" style="margin-bottom:6px">
+        <select id="prog-select" style="flex:1"></select>
+        <button id="btn-load-prog" title="Wczytaj do edytora">Edytuj</button>
+        <button id="btn-del-prog">Usuń</button>
+      </div>
+      <div class="inline">
+        <button id="btn-run" class="good">&#9654; Run</button>
+        <button id="btn-pause">&#10073;&#10073; Pauza</button>
+        <button id="btn-resume">&#9654;&#9654; Wznów</button>
+        <button id="btn-stop-prog" class="warnb">&#9632; Stop</button>
+      </div>
+      <div class="prog-status" id="prog-status"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-console">
+    <h2>Konsola</h2>
+    <div id="console-log"></div>
+    <div class="inline" style="margin-top:8px">
+      <input type="text" id="raw-cmd" placeholder="surowa komenda, np. STATUS" style="flex:1">
+      <button id="btn-send-raw">Wyślij</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script src="/static/visualizer.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

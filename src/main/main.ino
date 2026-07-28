@@ -1,4 +1,5 @@
 #include <AccelStepper.h>
+#include <Servo.h>
 #include <math.h>
 
 #include "config.h"
@@ -29,6 +30,8 @@
 //    JOG J1|J2|TOOL <deg>        ruch osi do zadanego kata (bez IK)
 //    JOG Z <mm>                  ruch osi Z do zadanej wysokosci
 //    IK X<f> Y<f> [E0|E1]        tylko obliczenie IK (bez ruchu) -> OK J1=.. J2=..
+//    SPEED <10-100>              globalny procent predkosci wszystkich osi
+//    GRIP 0|1                    gripper (serwo SG90): 0 = otwarty, 1 = zamkniety
 //    STOP                        zatrzymanie z rampa hamowania
 //    ESTOP                       natychmiastowe zatrzymanie + DISABLE
 //    ENABLE / DISABLE            zalaczenie / odlaczenie sterownikow
@@ -41,6 +44,10 @@ AccelStepper axisJ1(AccelStepper::DRIVER, PIN_J1_STEP, PIN_J1_DIR);
 AccelStepper axisJ2(AccelStepper::DRIVER, PIN_J2_STEP, PIN_J2_DIR);
 AccelStepper axisZ(AccelStepper::DRIVER, PIN_Z_STEP, PIN_Z_DIR);
 AccelStepper axisTool(AccelStepper::DRIVER, PIN_TOOL_STEP, PIN_TOOL_DIR);
+
+Servo gripperServo;
+bool gripperClosed = false;
+uint8_t speedPercent = SPEED_PERCENT_DEFAULT;
 
 enum class State : uint8_t { IDLE, MOVING, HOMING };
 
@@ -73,6 +80,16 @@ void isrLimitZ() {
 
 // ------------------------------------------------------------- helpers
 bool allHomed() { return homedJ1 && homedZ && (homedJ2 || !ELBOW_PRESENT); }
+
+float scaledSpeed(float base) { return base * (float)speedPercent / 100.0f; }
+
+// Skalowanie predkosci wszystkich osi wg globalnego procentu.
+void applySpeedScale() {
+  axisJ1.setMaxSpeed(scaledSpeed(J1_MAX_SPEED));
+  axisJ2.setMaxSpeed(scaledSpeed(J2_MAX_SPEED));
+  axisZ.setMaxSpeed(scaledSpeed(Z_MAX_SPEED));
+  axisTool.setMaxSpeed(scaledSpeed(TOOL_MAX_SPEED));
+}
 
 bool limitPressed(uint8_t pin) { return digitalRead(pin) == LIMIT_ACTIVE_STATE; }
 
@@ -233,7 +250,7 @@ bool homeAxisBlocking(AccelStepper& axis, uint8_t limitPin, int8_t dir,
 bool homeZ() {
   const bool ok = homeAxisBlocking(
       axisZ, LIMIT_PIN_Z, HOMING_DIR_Z,
-      lroundf(Z_HOME_POS_MM * STEPS_PER_MM_Z), Z_MAX_SPEED);
+      lroundf(Z_HOME_POS_MM * STEPS_PER_MM_Z), scaledSpeed(Z_MAX_SPEED));
   homedZ = ok;
   return ok;
 }
@@ -241,7 +258,7 @@ bool homeZ() {
 bool homeJ1() {
   const bool ok = homeAxisBlocking(
       axisJ1, LIMIT_PIN_J1, HOMING_DIR_J1,
-      lroundf(J1_HOME_POS_DEG * STEPS_PER_DEG_J1), J1_MAX_SPEED);
+      lroundf(J1_HOME_POS_DEG * STEPS_PER_DEG_J1), scaledSpeed(J1_MAX_SPEED));
   homedJ1 = ok;
   return ok;
 }
@@ -254,7 +271,7 @@ bool homeJ2() {
   }
   const bool ok = homeAxisBlocking(
       axisJ2, LIMIT_PIN_J2, HOMING_DIR_J2,
-      lroundf(J2_HOME_POS_DEG * STEPS_PER_DEG_J2), J2_MAX_SPEED);
+      lroundf(J2_HOME_POS_DEG * STEPS_PER_DEG_J2), scaledSpeed(J2_MAX_SPEED));
   homedJ2 = ok;
   return ok;
 }
@@ -293,7 +310,36 @@ void printStatus() {
   Serial.print(F(" J2="));
   Serial.print(j2Degrees(), 3);
   Serial.print(F(" TOOL="));
-  Serial.println(toolDegrees(), 3);
+  Serial.print(toolDegrees(), 3);
+  Serial.print(F(" SPEED="));
+  Serial.print(speedPercent);
+  Serial.print(F(" GRIP="));
+  Serial.println(gripperClosed ? 1 : 0);
+}
+
+void commandSpeed(const char* args) {
+  const int pct = atoi(args);
+  if (pct < SPEED_PERCENT_MIN || pct > SPEED_PERCENT_MAX) {
+    sendErr(F("BAD_CMD"), F("uzycie: SPEED <10-100>"));
+    return;
+  }
+  speedPercent = (uint8_t)pct;
+  applySpeedScale();
+  sendOk();
+}
+
+void commandGrip(const char* args) {
+  if (args[0] == '0' && args[1] == '\0') {
+    gripperClosed = false;
+    gripperServo.write(GRIPPER_OPEN_DEG);
+  } else if (args[0] == '1' && args[1] == '\0') {
+    gripperClosed = true;
+    gripperServo.write(GRIPPER_CLOSED_DEG);
+  } else {
+    sendErr(F("BAD_CMD"), F("uzycie: GRIP 0|1"));
+    return;
+  }
+  sendOk();
 }
 
 void commandHome(const char* args) {
@@ -452,7 +498,8 @@ void processCommand(char* cmd) {
 
   if (state == State::MOVING && anyAxisMoving() &&
       strncmp(cmd, "STOP", 4) != 0 && strncmp(cmd, "ESTOP", 5) != 0 &&
-      strncmp(cmd, "STATUS", 6) != 0 && strncmp(cmd, "PING", 4) != 0) {
+      strncmp(cmd, "STATUS", 6) != 0 && strncmp(cmd, "PING", 4) != 0 &&
+      strncmp(cmd, "SPEED", 5) != 0 && strncmp(cmd, "GRIP", 4) != 0) {
     sendErr(F("BUSY"), F("ruch w toku - uzyj STOP lub poczekaj na DONE"));
     return;
   }
@@ -474,6 +521,10 @@ void processCommand(char* cmd) {
     commandJog(cmd + 4);
   } else if (strncmp(cmd, "IK ", 3) == 0) {
     commandIkOnly(cmd + 3);
+  } else if (strncmp(cmd, "SPEED ", 6) == 0) {
+    commandSpeed(cmd + 6);
+  } else if (strncmp(cmd, "GRIP ", 5) == 0) {
+    commandGrip(cmd + 5);
   } else if (strcmp(cmd, "STOP") == 0) {
     stopAllRamped();
     sendOk();
@@ -549,6 +600,9 @@ void setup() {
   setupAxis(axisJ2, PIN_J2_ENABLE, J2_MAX_SPEED, J2_ACCEL);
   setupAxis(axisZ, PIN_Z_ENABLE, Z_MAX_SPEED, Z_ACCEL);
   setupAxis(axisTool, PIN_TOOL_ENABLE, TOOL_MAX_SPEED, TOOL_ACCEL);
+
+  gripperServo.attach(GRIPPER_SERVO_PIN);
+  gripperServo.write(GRIPPER_OPEN_DEG);
 
   enableAll();
   limitMonitoringEnabled = true;

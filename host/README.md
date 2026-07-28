@@ -24,6 +24,8 @@ Po resecie kontroler wysyla `READY SCARA-FW 2.0`.
 | `MOVE X<mm> Y<mm> [Z<mm>] [T<deg>] [E0\|E1]` | `OK J1=.. J2=..` + pozniej `DONE` | ruch IK (E1 = lokiec "up") |
 | `JOG J1\|J2\|Z\|TOOL <wartosc>` | `OK` + pozniej `DONE` | ruch pojedynczej osi |
 | `IK X<mm> Y<mm> [E0\|E1]` | `OK J1=.. J2=.. REACHABLE=0\|1` | samo IK, bez ruchu |
+| `SPEED <10-100>` | `OK` | globalny procent predkosci osi |
+| `GRIP 0\|1` | `OK` | gripper (serwo SG90): 0 = otwarty, 1 = zamkniety |
 | `STOP` | `OK` | stop z rampa |
 | `ESTOP` | `OK` | stop natychmiastowy + DISABLE (wymaga HOME) |
 | `ENABLE` / `DISABLE` | `OK` | sterowniki TB6600 |
