@@ -69,5 +69,15 @@ class HomeRequest(BaseModel):
     axis: Optional[Literal["J1", "J2", "Z"]] = None
 
 
+class JogRelativeRequest(BaseModel):
+    axis: Literal["J1", "J2", "Z", "TOOL"]
+    delta: float
+
+
+class SetHomeRequest(BaseModel):
+    axis: Optional[Literal["J1", "J2", "Z", "TOOL"]] = None
+    value: Optional[float] = None
+
+
 class RawCommandRequest(BaseModel):
     command: str = Field(min_length=1, max_length=90)

@@ -81,10 +81,20 @@ class SimulatedTransport:
         self.j2 = _SimAxis(4000.0 / 124.4444)   # ~32.1 deg/s
         self.z = _SimAxis(3000.0 / 400.0)       # 7.5 mm/s
         self.tool = _SimAxis(1200.0 / 8.8889)   # ~135 deg/s
-        self.homed = False
+        self.homed_j1 = False
+        self.homed_j2 = False
+        self.homed_z = False
         self.grip_closed = False
         self.speed_pct = 100
         self._done_pending = False
+
+    @property
+    def homed(self) -> bool:
+        return self.homed_j1 and self.homed_j2 and self.homed_z
+
+    @homed.setter
+    def homed(self, value: bool) -> None:
+        self.homed_j1 = self.homed_j2 = self.homed_z = value
 
     # ------------------------------------------------------------ interfejs
     def write_line(self, line: str) -> None:
@@ -141,10 +151,14 @@ class SimulatedTransport:
             self._reply("OK SCARA-FW 2.1 (SIM)")
         elif cmd == "STATUS":
             self._status(now)
+        elif cmd == "SETHOME" or cmd.startswith("SETHOME "):
+            self._sethome(cmd[7:].strip())
         elif cmd == "HOME" or cmd.startswith("HOME "):
             self._home(cmd[4:].strip())
         elif cmd.startswith("MOVE "):
             self._move(cmd[5:], now)
+        elif cmd.startswith("JOGR "):
+            self._jog_relative(cmd[5:], now)
         elif cmd.startswith("JOG "):
             self._jog(cmd[4:], now)
         elif cmd.startswith("IK "):
@@ -182,22 +196,80 @@ class SimulatedTransport:
 
     def _home(self, axis: str) -> None:
         # Homing w firmware jest blokujacy; w symulatorze krotkie opoznienie.
+        if axis not in ("", "J1", "J2", "Z"):
+            self._err("BAD_CMD", "uzycie: HOME [J1|J2|Z]")
+            return
         time.sleep(0.3)
         if axis in ("", "Z"):
             self.z.jump_to(kin.Z_MIN_MM)
+            self.homed_z = True
         if axis in ("", "J1"):
             self.j1.jump_to(kin.J1_MIN_DEG)
+            self.homed_j1 = True
         if axis in ("", "J2"):
             self.j2.jump_to(kin.J2_MIN_DEG)
+            self.homed_j2 = True
+        self._reply("OK")
+
+    def _sethome(self, args: str) -> None:
+        parts = args.split()
+        axis = parts[0] if parts else ""
+        value: Optional[float] = None
+        if len(parts) > 1:
+            try:
+                value = float(parts[1])
+            except ValueError:
+                self._err("BAD_CMD", "niepoprawna wartosc")
+                return
         if axis == "":
+            self.j1.jump_to(kin.J1_MIN_DEG)
+            self.j2.jump_to(kin.J2_MIN_DEG)
+            self.z.jump_to(kin.Z_MIN_MM)
+            self.tool.jump_to(0.0)
             self.homed = True
-        elif axis in ("J1", "J2", "Z"):
-            # Pojedyncza os nie wystarcza do pelnego HOMED - jak w firmware
-            # homed flagi sa per-os; upraszczamy: pelny HOME ustawia homed.
-            pass
+        elif axis == "J1":
+            self.j1.jump_to(kin.J1_MIN_DEG if value is None else value)
+            self.homed_j1 = True
+        elif axis == "J2":
+            self.j2.jump_to(kin.J2_MIN_DEG if value is None else value)
+            self.homed_j2 = True
+        elif axis == "Z":
+            self.z.jump_to(kin.Z_MIN_MM if value is None else value)
+            self.homed_z = True
+        elif axis == "TOOL":
+            self.tool.jump_to(0.0 if value is None else value)
         else:
-            self._err("BAD_CMD", "uzycie: HOME [J1|J2|Z]")
+            self._err("BAD_CMD", "uzycie: SETHOME [J1|J2|Z|TOOL] [wartosc]")
             return
+        self._reply("OK")
+
+    def _jog_relative(self, args: str, now: float) -> None:
+        parts = args.split()
+        if len(parts) != 2:
+            self._err("BAD_CMD", "uzycie: JOGR J1|J2|Z|TOOL <delta>")
+            return
+        axis_name, raw = parts
+        try:
+            delta = float(raw)
+        except ValueError:
+            self._err("BAD_CMD", "niepoprawna wartosc")
+            return
+        table = {
+            "J1": (kin.J1_MIN_DEG, kin.J1_MAX_DEG, self.j1, self.homed_j1),
+            "J2": (kin.J2_MIN_DEG, kin.J2_MAX_DEG, self.j2, self.homed_j2),
+            "Z": (kin.Z_MIN_MM, kin.Z_MAX_MM, self.z, self.homed_z),
+            "TOOL": (kin.TOOL_MIN_DEG, kin.TOOL_MAX_DEG, self.tool, True),
+        }
+        if axis_name not in table:
+            self._err("BAD_CMD", "nieznana os (J1|J2|Z|TOOL)")
+            return
+        lo, hi, sim_axis, axis_homed = table[axis_name]
+        target = sim_axis.position(now) + delta
+        if axis_homed and not (lo <= target <= hi):
+            self._err("JOINT_LIMIT", "cel poza zakresem osi")
+            return
+        sim_axis.move_to(target, now, self.speed_pct)
+        self._done_pending = True
         self._reply("OK")
 
     def _move(self, args: str, now: float) -> None:

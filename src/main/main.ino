@@ -25,6 +25,13 @@
 //                                      X=.. Y=.. Z=.. J1=.. J2=.. TOOL=..
 //    HOME                        homing wszystkich osi (Z -> J1 -> J2)
 //    HOME J1|J2|Z                homing jednej osi
+//    SETHOME                     homing reczny: biezaca pozycja wszystkich osi
+//                                = pozycje krancowe z config.h (J1/J2/Z) i 0
+//                                dla TOOL; osie oznaczane jako "homed"
+//    SETHOME J1|J2|Z|TOOL [wart] homing reczny jednej osi; opcjonalna wartosc
+//                                nadpisuje domyslna pozycje krancowa
+//    JOGR J1|J2|Z|TOOL <delta>   jog WZGLEDNY; dziala takze przed homingiem
+//                                (wtedy bez limitow programowych - ostroznie!)
 //    MOVE X<f> Y<f> [Z<f>] [T<f>] [E0|E1]   ruch IK do punktu (mm/stopnie);
 //                                E0 = lokiec "down", E1 = "up" (domyslnie E1)
 //    JOG J1|J2|TOOL <deg>        ruch osi do zadanego kata (bez IK)
@@ -472,6 +479,98 @@ void commandJog(const char* args) {
   sendOk();
 }
 
+// Jog wzgledny. Dziala rowniez przed homingiem (reczne dojezdzanie do
+// pozycji krancowych) - wtedy limity programowe NIE sa egzekwowane,
+// bo pozycja osi jest nieznana.
+void commandJogRelative(const char* args) {
+  char axisName[8];
+  float delta;
+  if (sscanf(args, "%7s %f", axisName, &delta) != 2) {
+    sendErr(F("BAD_CMD"), F("uzycie: JOGR J1|J2|Z|TOOL <delta>"));
+    return;
+  }
+
+  AccelStepper* axis = nullptr;
+  float stepsPerUnit = 0.0f;
+  bool axisHomed = false;
+  float minLimit = 0.0f, maxLimit = 0.0f;
+
+  if (strcmp(axisName, "J1") == 0) {
+    axis = &axisJ1; stepsPerUnit = STEPS_PER_DEG_J1; axisHomed = homedJ1;
+    minLimit = J1_MIN_DEG; maxLimit = J1_MAX_DEG;
+  } else if (strcmp(axisName, "J2") == 0) {
+    if (!ELBOW_PRESENT) {
+      sendErr(F("AXIS_DISABLED"), F("lokiec wylaczony (ELBOW_PRESENT=0)"));
+      return;
+    }
+    axis = &axisJ2; stepsPerUnit = STEPS_PER_DEG_J2; axisHomed = homedJ2;
+    minLimit = J2_MIN_DEG; maxLimit = J2_MAX_DEG;
+  } else if (strcmp(axisName, "Z") == 0) {
+    axis = &axisZ; stepsPerUnit = STEPS_PER_MM_Z; axisHomed = homedZ;
+    minLimit = Z_MIN_MM; maxLimit = Z_MAX_MM;
+  } else if (strcmp(axisName, "TOOL") == 0) {
+    axis = &axisTool; stepsPerUnit = STEPS_PER_DEG_TOOL; axisHomed = true;
+    minLimit = TOOL_MIN_DEG; maxLimit = TOOL_MAX_DEG;
+  } else {
+    sendErr(F("BAD_CMD"), F("nieznana os (J1|J2|Z|TOOL)"));
+    return;
+  }
+
+  const long targetSteps = axis->currentPosition() + lroundf(delta * stepsPerUnit);
+  if (axisHomed) {
+    const float targetUnits = targetSteps / stepsPerUnit;
+    if (targetUnits < minLimit || targetUnits > maxLimit) {
+      sendErr(F("JOINT_LIMIT"), F("cel poza zakresem osi"));
+      return;
+    }
+  }
+  axis->moveTo(targetSteps);
+  state = State::MOVING;
+  motionDoneReported = false;
+  sendOk();
+}
+
+// Homing reczny: biezaca fizyczna pozycja osi staje sie pozycja odniesienia.
+// Robot nalezy najpierw recznie (JOGR) dojechac do pozycji krancowych.
+void commandSetHome(const char* args) {
+  char axisName[8] = "";
+  float value = NAN;
+  const int parsed = sscanf(args, "%7s %f", axisName, &value);
+
+  if (parsed <= 0) {
+    // SETHOME bez argumentow: wszystkie osie w pozycjach krancowych.
+    axisJ1.setCurrentPosition(lroundf(J1_HOME_POS_DEG * STEPS_PER_DEG_J1));
+    axisJ2.setCurrentPosition(lroundf(J2_HOME_POS_DEG * STEPS_PER_DEG_J2));
+    axisZ.setCurrentPosition(lroundf(Z_HOME_POS_MM * STEPS_PER_MM_Z));
+    axisTool.setCurrentPosition(0);
+    homedJ1 = homedZ = true;
+    homedJ2 = true;
+    sendOk();
+    return;
+  }
+
+  if (strcmp(axisName, "J1") == 0) {
+    const float pos = isnan(value) ? J1_HOME_POS_DEG : value;
+    axisJ1.setCurrentPosition(lroundf(pos * STEPS_PER_DEG_J1));
+    homedJ1 = true;
+  } else if (strcmp(axisName, "J2") == 0) {
+    const float pos = isnan(value) ? J2_HOME_POS_DEG : value;
+    axisJ2.setCurrentPosition(lroundf(pos * STEPS_PER_DEG_J2));
+    homedJ2 = true;
+  } else if (strcmp(axisName, "Z") == 0) {
+    const float pos = isnan(value) ? Z_HOME_POS_MM : value;
+    axisZ.setCurrentPosition(lroundf(pos * STEPS_PER_MM_Z));
+    homedZ = true;
+  } else if (strcmp(axisName, "TOOL") == 0) {
+    const float pos = isnan(value) ? 0.0f : value;
+    axisTool.setCurrentPosition(lroundf(pos * STEPS_PER_DEG_TOOL));
+  } else {
+    sendErr(F("BAD_CMD"), F("uzycie: SETHOME [J1|J2|Z|TOOL] [wartosc]"));
+    return;
+  }
+  sendOk();
+}
+
 void commandIkOnly(const char* args) {
   float x = NAN, y = NAN, elbowFlag = 1.0f;
   if (!parseParam(args, 'X', x) || !parseParam(args, 'Y', y)) {
@@ -511,12 +610,18 @@ void processCommand(char* cmd) {
     Serial.println(F(FW_VERSION));
   } else if (strcmp(cmd, "STATUS") == 0) {
     printStatus();
+  } else if (strncmp(cmd, "SETHOME", 7) == 0) {
+    const char* args = cmd + 7;
+    while (*args == ' ') ++args;
+    commandSetHome(args);
   } else if (strncmp(cmd, "HOME", 4) == 0) {
     const char* args = cmd + 4;
     while (*args == ' ') ++args;
     commandHome(args);
   } else if (strncmp(cmd, "MOVE ", 5) == 0) {
     commandMove(cmd + 5);
+  } else if (strncmp(cmd, "JOGR ", 5) == 0) {
+    commandJogRelative(cmd + 5);
   } else if (strncmp(cmd, "JOG ", 4) == 0) {
     commandJog(cmd + 4);
   } else if (strncmp(cmd, "IK ", 3) == 0) {

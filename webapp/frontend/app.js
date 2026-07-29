@@ -146,13 +146,12 @@ document.querySelectorAll("#cart-steps button").forEach(b => b.onclick = () => {
   b.classList.add("sel");
 });
 
+// Jog osiowy jest WZGLEDNY (JOGR) - dziala takze przed homingiem,
+// co umozliwia reczne dojechanie do pozycji krancowych (homing reczny).
 document.querySelectorAll("[data-jog]").forEach(b => b.onclick = () => guarded(async () => {
   const axis = b.dataset.jog;
-  const key = axis.toLowerCase() === "tool" ? "tool" : axis.toLowerCase();
-  const current = robotStatus[key];
-  if (current === undefined) throw new Error("brak pozycji robota");
-  const target = current + jointStep * parseFloat(b.dataset.dir);
-  await api("/api/jog", "POST", { axis, value: target });
+  const delta = jointStep * parseFloat(b.dataset.dir);
+  await api("/api/jog_relative", "POST", { axis, delta });
 }));
 
 document.querySelectorAll("[data-cart]").forEach(b => b.onclick = () => guarded(async () => {
@@ -178,6 +177,16 @@ $("btn-estop").onclick = () => guarded(async () => {
 });
 $("btn-grip-open").onclick = () => guarded(() => api("/api/grip", "POST", { closed: false }));
 $("btn-grip-close").onclick = () => guarded(() => api("/api/grip", "POST", { closed: true }));
+
+$("btn-sethome-all").onclick = () => guarded(async () => {
+  await api("/api/sethome", "POST", {});
+  toast("HOME ustawiony ręcznie (wszystkie osie)", true);
+  VIZ.clearTrail();
+});
+document.querySelectorAll("[data-sethome]").forEach(b => b.onclick = () => guarded(async () => {
+  await api("/api/sethome", "POST", { axis: b.dataset.sethome });
+  toast(`HOME osi ${b.dataset.sethome} ustawiony ręcznie`, true);
+}));
 
 $("speed-slider").oninput = () => {
   $("speed-value").textContent = $("speed-slider").value + "%";

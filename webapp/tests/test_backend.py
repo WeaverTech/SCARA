@@ -140,6 +140,37 @@ def test_simulator_protocol():
     assert sim_command(sim, "MOVE X-165 Y0").startswith("ERR EXCLUSION_ZONE")
 
 
+def test_simulator_manual_homing():
+    sim = SimulatedTransport()
+    assert sim.read_line(0.2).startswith("READY")
+    # Przed homingiem: JOG absolutny odrzucony, JOGR dziala.
+    assert sim_command(sim, "JOG J1 10").startswith("ERR NOT_HOMED")
+    assert sim_command(sim, "JOGR J1 -5") == "OK"
+    time.sleep(0.4)  # ~5 deg przy 22.5 deg/s + zapas (BUSY dla kolejnego JOGR)
+    assert sim_command(sim, "JOGR Z 3") == "OK"
+    time.sleep(0.6)
+    assert "HOMED=0" in sim_command(sim, "STATUS")
+    # SETHOME wszystkich osi: pozycje krancowe, robot homed.
+    assert sim_command(sim, "SETHOME") == "OK"
+    status = sim_command(sim, "STATUS")
+    assert "HOMED=1" in status and "J1=-125.000" in status and "Z=0.000" in status
+    # Teraz normalny MOVE dziala.
+    assert sim_command(sim, "MOVE X200 Y50").startswith("OK J1=")
+
+
+def test_simulator_sethome_per_axis():
+    sim = SimulatedTransport()
+    sim.read_line(0.2)
+    assert sim_command(sim, "SETHOME J1") == "OK"
+    assert "HOMED=0" in sim_command(sim, "STATUS")  # J2 i Z wciaz nie
+    assert sim_command(sim, "SETHOME J2 10.5") == "OK"
+    assert sim_command(sim, "SETHOME Z") == "OK"
+    status = sim_command(sim, "STATUS")
+    assert "HOMED=1" in status and "J2=10.500" in status
+    # Po homingu JOGR egzekwuje limity.
+    assert sim_command(sim, "JOGR J1 -500").startswith("ERR JOINT_LIMIT")
+
+
 # ----------------------------------------------------- manager + programy
 @pytest.fixture
 def manager(tmp_path, monkeypatch):
@@ -214,6 +245,18 @@ def test_program_runner(manager):
     status = mgr.status()
     assert status["x"] == pytest.approx(150.0, abs=0.1)
     assert status["grip"] is False
+
+
+def test_manager_manual_homing(manager):
+    mgr, _ = manager
+    # Jog wzgledny przed homingiem + SETHOME -> pelnoprawny ruch.
+    mgr.jog_relative("J1", -10.0, wait=True)
+    mgr.set_home()
+    joints = mgr.move_joint(200.0, 50.0, wait=True)
+    assert joints["j1"] == pytest.approx(-28.5467, abs=1e-2)
+    mgr.set_home(axis="J1", value=-100.0)
+    time.sleep(0.3)
+    assert mgr.status()["j1"] == pytest.approx(-100.0, abs=0.01)
 
 
 def test_program_requires_home(manager):

@@ -176,6 +176,24 @@ input[type=range] { accent-color: var(--accent); }
       <button id="btn-grip-open">Otwórz</button>
       <button id="btn-grip-close">Zamknij</button>
     </div>
+
+    <div class="subsection">
+      <div><b>Homing ręczny</b> <small style="color:var(--muted)">(bez krańcówek)</small></div>
+      <p style="font-size:12px;color:var(--muted);margin:6px 0">
+        Dojedź jogiem osiowym do pozycji krańcowych
+        (J1 = &minus;125°, J2 = &minus;145°, Z = 0 mm) i ustaw HOME.
+        Jog działa też przed homingiem, ale wtedy <b>bez limitów</b> — uważaj.
+      </p>
+      <button id="btn-sethome-all" class="good" style="width:100%;margin-bottom:6px">
+        SET HOME — wszystkie osie</button>
+      <div class="inline">
+        <small style="color:var(--muted)">pojedynczo:</small>
+        <button data-sethome="J1">J1</button>
+        <button data-sethome="J2">J2</button>
+        <button data-sethome="Z">Z</button>
+        <button data-sethome="TOOL">TOOL</button>
+      </div>
+    </div>
   </section>
 
   <section class="panel" id="panel-viz">

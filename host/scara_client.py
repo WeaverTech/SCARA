@@ -173,6 +173,28 @@ class ScaraClient:
         if wait:
             self.wait_done(timeout=timeout)
 
+    def jog_relative(self, axis: str, delta: float, wait: bool = True,
+                     timeout: float = 120.0) -> None:
+        """Jog wzgledny - dziala takze przed homingiem (homing reczny)."""
+        self._command(f"JOGR {axis.upper()} {delta:.3f}")
+        if wait:
+            self.wait_done(timeout=timeout)
+
+    def set_home(self, axis: Optional[str] = None,
+                 value: Optional[float] = None) -> None:
+        """Homing reczny: biezaca pozycja = pozycja krancowa z config.h.
+
+        Bez argumentow ustawia wszystkie osie (robot musi fizycznie stac
+        w pozycjach krancowych). Z argumentem - jedna os, opcjonalnie
+        z podana wartoscia zamiast domyslnej krancowej.
+        """
+        cmd = "SETHOME"
+        if axis:
+            cmd += f" {axis.upper()}"
+            if value is not None:
+                cmd += f" {value:.3f}"
+        self._command(cmd)
+
     def solve_ik(self, x: float, y: float, elbow_up: bool = True) -> Dict[str, float]:
         """Oblicza IK w firmware bez wykonywania ruchu."""
         reply = self._command(f"IK X{x:.3f} Y{y:.3f} E{1 if elbow_up else 0}")

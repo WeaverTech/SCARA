@@ -20,7 +20,9 @@ Po resecie kontroler wysyla `READY SCARA-FW 2.0`.
 | `PING` | `OK PONG` | test lacza |
 | `VERSION` | `OK SCARA-FW 2.0` | wersja firmware |
 | `STATUS` | `OK STATE=.. HOMED=.. X=.. Y=.. Z=.. J1=.. J2=.. TOOL=..` | pelny stan |
-| `HOME [J1\|J2\|Z]` | `OK` / `ERR HOMING_FAIL ...` | homing (bez argumentu: Z, J1, J2) |
+| `HOME [J1\|J2\|Z]` | `OK` / `ERR HOMING_FAIL ...` | homing na krancowkach (bez argumentu: Z, J1, J2) |
+| `SETHOME [J1\|J2\|Z\|TOOL] [wart]` | `OK` | homing reczny: biezaca pozycja = krancowa z config.h (lub podana) |
+| `JOGR J1\|J2\|Z\|TOOL <delta>` | `OK` + pozniej `DONE` | jog wzgledny; dziala tez przed homingiem (bez limitow!) |
 | `MOVE X<mm> Y<mm> [Z<mm>] [T<deg>] [E0\|E1]` | `OK J1=.. J2=..` + pozniej `DONE` | ruch IK (E1 = lokiec "up") |
 | `JOG J1\|J2\|Z\|TOOL <wartosc>` | `OK` + pozniej `DONE` | ruch pojedynczej osi |
 | `IK X<mm> Y<mm> [E0\|E1]` | `OK J1=.. J2=.. REACHABLE=0\|1` | samo IK, bez ruchu |

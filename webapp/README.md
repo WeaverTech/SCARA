@@ -25,8 +25,12 @@ Nastepnie otworz [http://localhost:8000](http://localhost:8000), wybierz port
 
 ## Funkcje
 
-- **Jog** osiowy (J1/J2/Z/TOOL) i kartezjanski (XY przez IK), wybor kroku,
-  konfiguracja lokcia up/down.
+- **Jog** osiowy (J1/J2/Z/TOOL, wzgledny - dziala tez przed homingiem)
+  i kartezjanski (XY przez IK), wybor kroku, konfiguracja lokcia up/down.
+- **Homing reczny** (praca bez krancowek): dojedz jogiem do pozycji
+  krancowych (J1 = -125 st., J2 = -145 st., Z = 0) i kliknij "SET HOME" -
+  biezaca pozycja staje sie pozycja odniesienia (komenda `SETHOME`,
+  takze per-os). Uwaga: jog przed homingiem nie ma limitow programowych.
 - **Predkosc globalna** 10-100% (suwak, komenda `SPEED`).
 - **Gripper** (serwo SG90): otworz/zamknij (komenda `GRIP`).
 - **Pamiec punktow**: Teach z biezacej pozycji, Go/Go-liniowy, punkty widoczne

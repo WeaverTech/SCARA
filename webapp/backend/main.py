@@ -20,9 +20,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import kinematics_mm as kin
-from .models import (ConnectRequest, GripRequest, HomeRequest, JogRequest,
-                     MoveRequest, Point, Program, RawCommandRequest,
-                     SpeedRequest)
+from .models import (ConnectRequest, GripRequest, HomeRequest,
+                     JogRelativeRequest, JogRequest, MoveRequest, Point,
+                     Program, RawCommandRequest, SetHomeRequest, SpeedRequest)
 from .robot_manager import RobotError, RobotManager
 from .storage import Storage
 from .transport import list_serial_ports
@@ -107,6 +107,18 @@ def api_home(req: HomeRequest):
 @app.post("/api/jog")
 def api_jog(req: JogRequest):
     _robot_call(manager.jog, req.axis, req.value)
+    return {"ok": True}
+
+
+@app.post("/api/jog_relative")
+def api_jog_relative(req: JogRelativeRequest):
+    _robot_call(manager.jog_relative, req.axis, req.delta)
+    return {"ok": True}
+
+
+@app.post("/api/sethome")
+def api_sethome(req: SetHomeRequest):
+    _robot_call(manager.set_home, req.axis, req.value)
     return {"ok": True}
 
 

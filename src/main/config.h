@@ -95,7 +95,7 @@
 
 // --- KOMUNIKACJA ---
 #define SERIAL_BAUD 115200
-#define FW_VERSION "SCARA-FW 2.1"
+#define FW_VERSION "SCARA-FW 2.2"
 
 // Prototyp bez drugiej przekladni cykloidalnej: ustaw 0, aby pominac J2.
 #define ELBOW_PRESENT 1

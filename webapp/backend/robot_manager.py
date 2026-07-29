@@ -261,6 +261,22 @@ class RobotManager:
         if wait:
             self.wait_done()
 
+    def jog_relative(self, axis: str, delta: float, wait: bool = False) -> None:
+        """Jog wzgledny - dziala takze przed homingiem (homing reczny)."""
+        self.motion_command(f"JOGR {axis} {delta:.3f}")
+        if wait:
+            self.wait_done()
+
+    def set_home(self, axis: Optional[str] = None,
+                 value: Optional[float] = None) -> None:
+        """Homing reczny: biezaca pozycja = pozycja krancowa (lub podana)."""
+        cmd = "SETHOME"
+        if axis:
+            cmd += f" {axis}"
+            if value is not None:
+                cmd += f" {value:.3f}"
+        self.command(cmd)
+
     def set_speed(self, percent: int) -> None:
         self.command(f"SPEED {percent}")
 
