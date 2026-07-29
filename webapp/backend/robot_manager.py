@@ -31,6 +31,9 @@ STATUS_POLL_INTERVAL = 0.1
 DEFAULT_CMD_TIMEOUT = 5.0
 HOME_TIMEOUT = 180.0
 MOTION_TIMEOUT = 300.0
+# Arduino Mega: DTR reset + bootloader zajmuje ~1-2 s zanim pojawi sie READY.
+READY_TIMEOUT = 5.0
+PING_TIMEOUT = 3.0
 
 
 class RobotError(RuntimeError):
@@ -38,6 +41,31 @@ class RobotError(RuntimeError):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+
+
+def _port_open_error(port: str, exc: BaseException) -> RobotError:
+    """Mapuje wyjatki pyserial/OS na czytelny RobotError dla GUI."""
+    text = str(exc) or exc.__class__.__name__
+    lower = text.lower()
+    busy_hints = (
+        "permission", "access is denied", "busy", "in use", "resource temporarily",
+        "odmowa dostepu", "being used", "permissionerror",
+    )
+    missing_hints = ("no such file", "not found", "filenotfound", "cannot find")
+    if any(h in lower for h in busy_hints) or isinstance(exc, PermissionError):
+        return RobotError(
+            "PORT_BUSY",
+            f"port {port} zajęty lub niedostępny — zamknij Serial Monitor / "
+            f"Arduino IDE (i inne programy używające tego COM) i spróbuj ponownie "
+            f"({text})",
+        )
+    if isinstance(exc, FileNotFoundError) or any(h in lower for h in missing_hints):
+        return RobotError(
+            "PORT_ERROR",
+            f"port {port} nie istnieje — odśwież listę portów (⟳) i wybierz "
+            f"ten sam COM co w Arduino IDE ({text})",
+        )
+    return RobotError("PORT_ERROR", f"nie można otworzyć portu {port}: {text}")
 
 
 class RobotManager:
@@ -51,6 +79,7 @@ class RobotManager:
         self._cmd_lock = Lock()          # jedna komenda na raz
         self._reply_queue: "queue.Queue[str]" = queue.Queue()
         self._done_event = Event()
+        self._ready_event = Event()
         self._moving = False
         self._alive = Event()
 
@@ -86,35 +115,51 @@ class RobotManager:
     def connect(self, port: str) -> None:
         if self.connected:
             raise RobotError("ALREADY_CONNECTED", f"polaczono z {self._port}")
-        self._transport = open_transport(port)
+        if not port or not str(port).strip():
+            raise RobotError("PORT_ERROR", "nie wybrano portu — odśwież listę (⟳)")
+
+        try:
+            transport = open_transport(port)
+        except RobotError:
+            raise
+        except Exception as exc:
+            raise _port_open_error(port, exc) from exc
+
+        self._transport = transport
         self._port = port
         self._alive.set()
         self._reply_queue = queue.Queue()
         self._done_event.clear()
+        self._ready_event.clear()
         self._moving = False
+        with self._status_lock:
+            self._status = {}
 
+        # Tylko reader podczas handshake — poller STATUS nie może startować
+        # zanim Arduino skończy boot (inaczej gubi się READY / PING).
         self._reader_thread = Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
-        self._poller_thread = Thread(target=self._poller_loop, daemon=True)
-        self._poller_thread.start()
 
-        # Poczekaj na READY (reset Arduino przy otwarciu portu) lub sprawdz PING.
-        deadline = time.monotonic() + 4.0
-        while time.monotonic() < deadline:
-            with self._status_lock:
-                if self._status:
-                    break
-            time.sleep(0.1)
+        self._ready_event.wait(timeout=READY_TIMEOUT)
         try:
-            self.command("PING", timeout=3.0)
+            self.command("PING", timeout=PING_TIMEOUT)
         except (RobotError, TimeoutError):
             self.disconnect()
-            raise RobotError("NO_RESPONSE", "brak odpowiedzi z kontrolera")
+            raise RobotError(
+                "NO_RESPONSE",
+                "port otwarty, ale brak odpowiedzi z Arduino. Sprawdź: "
+                "firmware SCARA-FW 2.2 wgrany z tego repo, baud 115200, "
+                "Serial Monitor zamknięty, wybrany ten sam port COM co w IDE",
+            )
+
+        self._poller_thread = Thread(target=self._poller_loop, daemon=True)
+        self._poller_thread.start()
         self._emit({"type": "connection", "connected": True, "port": port})
 
     def disconnect(self) -> None:
         self.stop_program()
         self._alive.clear()
+        self._ready_event.clear()
         transport = self._transport
         self._transport = None
         self._port = None
@@ -156,6 +201,7 @@ class RobotManager:
             elif line.startswith("READY"):
                 with self._status_lock:
                     self._status = {"fw": line}
+                self._ready_event.set()
             elif line.startswith(("OK", "ERR")):
                 self._reply_queue.put(line)
             # inne linie (np. ERR LIMIT_HIT async) - tylko do logu:

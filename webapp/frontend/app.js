@@ -23,17 +23,22 @@ async function api(path, method = "GET", body = null) {
   return res.json();
 }
 
-function toast(msg, ok = false) {
+function toast(msg, ok = false, ms = 3500) {
   const el = $("toast");
   el.textContent = msg;
   el.className = ok ? "ok" : "";
   el.style.display = "block";
   clearTimeout(el._t);
-  el._t = setTimeout(() => { el.style.display = "none"; }, 3500);
+  el._t = setTimeout(() => { el.style.display = "none"; }, ms);
 }
 
 async function guarded(fn) {
-  try { await fn(); } catch (e) { toast(e.message); }
+  try { await fn(); }
+  catch (e) {
+    const msg = e.message || String(e);
+    const long = /PORT_|NO_RESPONSE|zajęty|Serial Monitor/i.test(msg);
+    toast(msg, false, long ? 8000 : 3500);
+  }
 }
 
 // ------------------------------------------------------------- websocket
@@ -115,6 +120,7 @@ function logLine(direction, line) {
 async function refreshPorts() {
   const ports = await api("/api/ports");
   const sel = $("port-select");
+  const prev = sel.value;
   sel.innerHTML = "";
   ports.forEach(p => {
     const o = document.createElement("option");
@@ -122,13 +128,31 @@ async function refreshPorts() {
     o.textContent = `${p.device} — ${p.description}`;
     sel.appendChild(o);
   });
+  if (prev && [...sel.options].some(o => o.value === prev)) {
+    sel.value = prev;
+  } else {
+    // Preferuj prawdziwy port COM/tty nad symulatorem, jesli jest.
+    const hw = [...sel.options].find(o => o.value !== "sim");
+    if (hw) sel.value = hw.value;
+  }
+  const hint = $("conn-hint");
+  if (hint) {
+    const hwCount = ports.filter(p => p.device !== "sim").length;
+    hint.textContent = hwCount
+      ? "Zamknij Serial Monitor w Arduino IDE przed Połącz"
+      : "Brak portów USB — podłącz Mega albo użyj sim";
+  }
 }
 
 $("btn-refresh-ports").onclick = () => guarded(refreshPorts);
 $("btn-connect").onclick = () => guarded(async () => {
   if (connected) { await api("/api/disconnect", "POST"); }
   else {
-    await api("/api/connect", "POST", { port: $("port-select").value });
+    const port = $("port-select").value;
+    if (!port) throw new Error("brak portu — odśwież listę (⟳) lub podłącz Arduino");
+    toast("Łączenie z " + port + "…", true, 2000);
+    await api("/api/connect", "POST", { port });
+    toast("Połączono z " + port, true);
     VIZ.clearTrail();
   }
 });

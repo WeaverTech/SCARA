@@ -283,3 +283,94 @@ def test_program_stop(manager):
     assert mgr.program_running
     mgr.stop_program()
     assert not mgr.program_running
+
+
+# ---------------------------------------------------- handshake / bledy portu
+def test_connect_empty_port(tmp_path):
+    mgr = RobotManager(Storage(tmp_path))
+    with pytest.raises(RobotError) as exc:
+        mgr.connect("")
+    assert exc.value.code == "PORT_ERROR"
+
+
+def test_connect_port_busy(tmp_path, monkeypatch):
+    from webapp.backend import robot_manager as rm
+
+    def boom(_port):
+        raise PermissionError("Access is denied")
+
+    monkeypatch.setattr(rm, "open_transport", boom)
+    mgr = RobotManager(Storage(tmp_path))
+    with pytest.raises(RobotError) as exc:
+        mgr.connect("COM3")
+    assert exc.value.code == "PORT_BUSY"
+    assert "Serial Monitor" in exc.value.message
+    assert not mgr.connected
+
+
+def test_connect_no_response(tmp_path, monkeypatch):
+    """Transport otwiera sie, ale nigdy nie odpowiada na PING."""
+    from webapp.backend import robot_manager as rm
+
+    class DeadTransport:
+        def write_line(self, line: str) -> None:
+            pass
+
+        def read_line(self, timeout: float = 0.1):
+            time.sleep(min(timeout, 0.05))
+            return None
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(rm, "open_transport", lambda port: DeadTransport())
+    monkeypatch.setattr(rm, "READY_TIMEOUT", 0.2)
+    monkeypatch.setattr(rm, "PING_TIMEOUT", 0.3)
+    mgr = RobotManager(Storage(tmp_path))
+    with pytest.raises(RobotError) as exc:
+        mgr.connect("COM9")
+    assert exc.value.code == "NO_RESPONSE"
+    assert not mgr.connected
+
+
+def test_connect_waits_for_ready_before_poller(tmp_path, monkeypatch):
+    """Poller STATUS nie startuje zanim handshake (READY+PING) sie uda."""
+    from webapp.backend import robot_manager as rm
+
+    class DelayedReady:
+        def __init__(self) -> None:
+            self.t0 = time.monotonic()
+            self.cmds = []
+
+        def write_line(self, line: str) -> None:
+            self.cmds.append(line)
+
+        def read_line(self, timeout: float = 0.1):
+            # READY dopiero po 0.25 s (symulacja bootloadera Mega).
+            if time.monotonic() - self.t0 >= 0.25 and not getattr(self, "_sent", False):
+                self._sent = True
+                return "READY SCARA-FW 2.2"
+            if self.cmds:
+                cmd = self.cmds.pop(0)
+                if cmd == "PING":
+                    return "OK PONG"
+                if cmd == "STATUS":
+                    return ("OK STATE=IDLE HOMED=0 X=0 Y=0 Z=0 "
+                            "J1=0 J2=0 TOOL=0 SPEED=100 GRIP=0")
+                return "OK"
+            time.sleep(min(timeout, 0.05))
+            return None
+
+        def close(self) -> None:
+            pass
+
+    transport = DelayedReady()
+    monkeypatch.setattr(rm, "open_transport", lambda port: transport)
+    mgr = RobotManager(Storage(tmp_path))
+    mgr.connect("fake")
+    assert mgr.connected
+    assert mgr._poller_thread is not None and mgr._poller_thread.is_alive()
+    # READY musial dojsc przed startem pollera (inaczej PING by sie wylozyl).
+    assert mgr._ready_event.is_set()
+    mgr.disconnect()
+    assert not mgr.connected
