@@ -333,6 +333,51 @@ def test_connect_no_response(tmp_path, monkeypatch):
     assert not mgr.connected
 
 
+def test_connect_retries_ping_after_bootloader_swallow(tmp_path, monkeypatch):
+    """Pierwszy PING ginie w bootloaderze (brak odpowiedzi), drugi dziala."""
+    from webapp.backend import robot_manager as rm
+
+    class SlowBootTransport:
+        def __init__(self) -> None:
+            self.pings_seen = 0
+            self.replies = []
+
+        def write_line(self, line: str) -> None:
+            if line == "PING":
+                self.pings_seen += 1
+                if self.pings_seen == 1:
+                    return  # bootloader polknal pierwszy PING
+                self.replies.append("OK PONG")
+            elif line == "VERSION":
+                self.replies.append("OK SCARA-FW 2.2")
+            elif line == "STATUS":
+                self.replies.append(
+                    "OK STATE=IDLE HOMED=0 X=0 Y=0 Z=0 "
+                    "J1=0 J2=0 TOOL=0 SPEED=100 GRIP=0")
+            else:
+                self.replies.append("OK")
+
+        def read_line(self, timeout: float = 0.1):
+            if self.replies:
+                return self.replies.pop(0)
+            time.sleep(min(timeout, 0.02))
+            return None
+
+        def close(self) -> None:
+            pass
+
+    transport = SlowBootTransport()
+    monkeypatch.setattr(rm, "open_transport", lambda port: transport)
+    monkeypatch.setattr(rm, "READY_TIMEOUT", 0.1)
+    monkeypatch.setattr(rm, "PING_TIMEOUT", 0.2)
+    monkeypatch.setattr(rm, "PING_RETRY_DELAY", 0.1)
+    mgr = RobotManager(Storage(tmp_path))
+    mgr.connect("COM5")
+    assert mgr.connected
+    assert transport.pings_seen == 2
+    mgr.disconnect()
+
+
 def test_connect_rejects_foreign_firmware(tmp_path, monkeypatch):
     """Szkic znajacy PING, ale nie VERSION/STATUS -> czytelny FW_MISMATCH."""
     from webapp.backend import robot_manager as rm
