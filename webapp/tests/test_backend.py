@@ -333,6 +333,39 @@ def test_connect_no_response(tmp_path, monkeypatch):
     assert not mgr.connected
 
 
+def test_connect_rejects_foreign_firmware(tmp_path, monkeypatch):
+    """Szkic znajacy PING, ale nie VERSION/STATUS -> czytelny FW_MISMATCH."""
+    from webapp.backend import robot_manager as rm
+
+    class ForeignFirmware:
+        def __init__(self) -> None:
+            self.replies = ["READY stary-szkic 1.0"]
+
+        def write_line(self, line: str) -> None:
+            if line == "PING":
+                self.replies.append("OK PONG")
+            else:
+                self.replies.append("ERR BAD_CMD nieznana komenda")
+
+        def read_line(self, timeout: float = 0.1):
+            if self.replies:
+                return self.replies.pop(0)
+            time.sleep(min(timeout, 0.05))
+            return None
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(rm, "open_transport", lambda port: ForeignFirmware())
+    monkeypatch.setattr(rm, "READY_TIMEOUT", 0.3)
+    mgr = RobotManager(Storage(tmp_path))
+    with pytest.raises(RobotError) as exc:
+        mgr.connect("COM7")
+    assert exc.value.code == "FW_MISMATCH"
+    assert "src/main/main.ino" in exc.value.message
+    assert not mgr.connected
+
+
 def test_connect_waits_for_ready_before_poller(tmp_path, monkeypatch):
     """Poller STATUS nie startuje zanim handshake (READY+PING) sie uda."""
     from webapp.backend import robot_manager as rm
@@ -354,6 +387,8 @@ def test_connect_waits_for_ready_before_poller(tmp_path, monkeypatch):
                 cmd = self.cmds.pop(0)
                 if cmd == "PING":
                     return "OK PONG"
+                if cmd == "VERSION":
+                    return "OK SCARA-FW 2.2"
                 if cmd == "STATUS":
                     return ("OK STATE=IDLE HOMED=0 X=0 Y=0 Z=0 "
                             "J1=0 J2=0 TOOL=0 SPEED=100 GRIP=0")

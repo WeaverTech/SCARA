@@ -34,6 +34,8 @@ MOTION_TIMEOUT = 300.0
 # Arduino Mega: DTR reset + bootloader zajmuje ~1-2 s zanim pojawi sie READY.
 READY_TIMEOUT = 5.0
 PING_TIMEOUT = 3.0
+# Wersja firmware wymagana przez ten backend (src/main/config.h: FW_VERSION).
+EXPECTED_FW = "SCARA-FW 2.2"
 
 
 class RobotError(RuntimeError):
@@ -88,6 +90,7 @@ class RobotManager:
 
         self._status: Dict = {}
         self._status_lock = Lock()
+        self._fw_version: Optional[str] = None
 
         self._runner_thread: Optional[Thread] = None
         self._run_stop = Event()
@@ -148,9 +151,39 @@ class RobotManager:
             raise RobotError(
                 "NO_RESPONSE",
                 "port otwarty, ale brak odpowiedzi z Arduino. Sprawdź: "
-                "firmware SCARA-FW 2.2 wgrany z tego repo, baud 115200, "
+                f"firmware {EXPECTED_FW} wgrany z tego repo, baud 115200, "
                 "Serial Monitor zamknięty, wybrany ten sam port COM co w IDE",
             )
+
+        # Weryfikacja firmware: stary/obcy szkic potrafi znac PING, ale nie
+        # STATUS/JOGR/SETHOME/GRIP - wtedy GUI dostawaloby lawine BAD_CMD.
+        try:
+            fw = self.command("VERSION", timeout=PING_TIMEOUT)
+        except (RobotError, TimeoutError):
+            self.disconnect()
+            raise RobotError(
+                "FW_MISMATCH",
+                "Arduino odpowiada, ale nie zna komendy VERSION — na płytce "
+                "jest inny lub stary szkic. Wgraj firmware z tego repo "
+                f"(src/main/main.ino, {EXPECTED_FW}) przez Arduino IDE",
+            )
+        if "SCARA-FW" not in fw:
+            self.disconnect()
+            raise RobotError(
+                "FW_MISMATCH",
+                f"nieznany firmware na płytce ('{fw}'). Wgraj firmware z tego "
+                f"repo (src/main/main.ino, {EXPECTED_FW}) przez Arduino IDE",
+            )
+        self._fw_version = fw
+        if not fw.startswith(EXPECTED_FW):
+            self._emit({
+                "type": "alarm",
+                "detail": (
+                    f"Firmware {fw}, oczekiwano {EXPECTED_FW} — część funkcji "
+                    "(SETHOME/JOGR/GRIP/SPEED) może nie działać. Wgraj "
+                    "aktualny src/main/main.ino"
+                ),
+            })
 
         self._poller_thread = Thread(target=self._poller_loop, daemon=True)
         self._poller_thread.start()
@@ -163,6 +196,7 @@ class RobotManager:
         transport = self._transport
         self._transport = None
         self._port = None
+        self._fw_version = None
         if self._reader_thread is not None:
             self._reader_thread.join(timeout=1.0)
             self._reader_thread = None
@@ -295,7 +329,10 @@ class RobotManager:
 
     def status(self) -> Dict:
         with self._status_lock:
-            return dict(self._status)
+            status = dict(self._status)
+        if self._fw_version:
+            status["fw"] = self._fw_version
+        return status
 
     # ------------------------------------------------------------ operacje
     def home(self, axis: Optional[str] = None) -> None:
