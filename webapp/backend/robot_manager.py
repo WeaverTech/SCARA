@@ -34,6 +34,8 @@ MOTION_TIMEOUT = 300.0
 # Arduino Mega: DTR reset + bootloader zajmuje ~1-2 s zanim pojawi sie READY.
 READY_TIMEOUT = 5.0
 PING_TIMEOUT = 3.0
+PING_ATTEMPTS = 3
+PING_RETRY_DELAY = 1.5
 # Wersja firmware wymagana przez ten backend (src/main/config.h: FW_VERSION).
 EXPECTED_FW = "SCARA-FW 2.2"
 
@@ -144,9 +146,23 @@ class RobotManager:
         self._reader_thread.start()
 
         self._ready_event.wait(timeout=READY_TIMEOUT)
-        try:
-            self.command("PING", timeout=PING_TIMEOUT)
-        except (RobotError, TimeoutError):
+        # PING z ponawianiem: po resecie DTR bootloader Megi potrafi jeszcze
+        # przez kilka sekund polykac dane z portu - pierwszy PING wyslany za
+        # wczesnie ginie bez odpowiedzi (a Arduino IDE "dziala od razu", bo po
+        # otwarciu monitora niczego nie wysyla i po prostu czeka).
+        ping_ok = False
+        for attempt in range(PING_ATTEMPTS):
+            if attempt > 0:
+                # Daj bootloaderowi czas na oddanie sterowania firmware'owi;
+                # w miedzyczasie reader moze jeszcze zlapac READY.
+                self._ready_event.wait(timeout=PING_RETRY_DELAY)
+            try:
+                self.command("PING", timeout=PING_TIMEOUT)
+                ping_ok = True
+                break
+            except (RobotError, TimeoutError):
+                continue
+        if not ping_ok:
             self.disconnect()
             raise RobotError(
                 "NO_RESPONSE",
