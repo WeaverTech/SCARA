@@ -43,7 +43,12 @@ class SerialTransport:
         self._serial.flush()
 
     def read_line(self, timeout: float = 0.1) -> Optional[str]:
-        self._serial.timeout = timeout
+        # Nie przypisuj self._serial.timeout przy kazdym odczycie: na Windows
+        # kazde przypisanie wywoluje rekonfiguracje portu (SetCommState),
+        # a czesc sterownikow USB-serial porzuca wtedy dane czekajace w
+        # buforze RX - odpowiedzi z Arduino ginely losowo (NO_RESPONSE/504).
+        if self._serial.timeout != timeout:
+            self._serial.timeout = timeout
         raw = self._serial.readline()
         if not raw:
             return None
