@@ -31,6 +31,13 @@ STATUS_POLL_INTERVAL = 0.1
 DEFAULT_CMD_TIMEOUT = 5.0
 HOME_TIMEOUT = 180.0
 MOTION_TIMEOUT = 300.0
+# Arduino Mega: DTR reset + bootloader zajmuje ~1-2 s zanim pojawi sie READY.
+READY_TIMEOUT = 5.0
+PING_TIMEOUT = 3.0
+PING_ATTEMPTS = 3
+PING_RETRY_DELAY = 1.5
+# Wersja firmware wymagana przez ten backend (src/main/config.h: FW_VERSION).
+EXPECTED_FW = "SCARA-FW 2.2"
 
 
 class RobotError(RuntimeError):
@@ -38,6 +45,31 @@ class RobotError(RuntimeError):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+
+
+def _port_open_error(port: str, exc: BaseException) -> RobotError:
+    """Mapuje wyjatki pyserial/OS na czytelny RobotError dla GUI."""
+    text = str(exc) or exc.__class__.__name__
+    lower = text.lower()
+    busy_hints = (
+        "permission", "access is denied", "busy", "in use", "resource temporarily",
+        "odmowa dostepu", "being used", "permissionerror",
+    )
+    missing_hints = ("no such file", "not found", "filenotfound", "cannot find")
+    if any(h in lower for h in busy_hints) or isinstance(exc, PermissionError):
+        return RobotError(
+            "PORT_BUSY",
+            f"port {port} zajęty lub niedostępny — zamknij Serial Monitor / "
+            f"Arduino IDE (i inne programy używające tego COM) i spróbuj ponownie "
+            f"({text})",
+        )
+    if isinstance(exc, FileNotFoundError) or any(h in lower for h in missing_hints):
+        return RobotError(
+            "PORT_ERROR",
+            f"port {port} nie istnieje — odśwież listę portów (⟳) i wybierz "
+            f"ten sam COM co w Arduino IDE ({text})",
+        )
+    return RobotError("PORT_ERROR", f"nie można otworzyć portu {port}: {text}")
 
 
 class RobotManager:
@@ -51,6 +83,7 @@ class RobotManager:
         self._cmd_lock = Lock()          # jedna komenda na raz
         self._reply_queue: "queue.Queue[str]" = queue.Queue()
         self._done_event = Event()
+        self._ready_event = Event()
         self._moving = False
         self._alive = Event()
 
@@ -59,6 +92,7 @@ class RobotManager:
 
         self._status: Dict = {}
         self._status_lock = Lock()
+        self._fw_version: Optional[str] = None
 
         self._runner_thread: Optional[Thread] = None
         self._run_stop = Event()
@@ -86,38 +120,99 @@ class RobotManager:
     def connect(self, port: str) -> None:
         if self.connected:
             raise RobotError("ALREADY_CONNECTED", f"polaczono z {self._port}")
-        self._transport = open_transport(port)
+        if not port or not str(port).strip():
+            raise RobotError("PORT_ERROR", "nie wybrano portu — odśwież listę (⟳)")
+
+        try:
+            transport = open_transport(port)
+        except RobotError:
+            raise
+        except Exception as exc:
+            raise _port_open_error(port, exc) from exc
+
+        self._transport = transport
         self._port = port
         self._alive.set()
         self._reply_queue = queue.Queue()
         self._done_event.clear()
+        self._ready_event.clear()
         self._moving = False
+        with self._status_lock:
+            self._status = {}
 
+        # Tylko reader podczas handshake — poller STATUS nie może startować
+        # zanim Arduino skończy boot (inaczej gubi się READY / PING).
         self._reader_thread = Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
-        self._poller_thread = Thread(target=self._poller_loop, daemon=True)
-        self._poller_thread.start()
 
-        # Poczekaj na READY (reset Arduino przy otwarciu portu) lub sprawdz PING.
-        deadline = time.monotonic() + 4.0
-        while time.monotonic() < deadline:
-            with self._status_lock:
-                if self._status:
-                    break
-            time.sleep(0.1)
+        self._ready_event.wait(timeout=READY_TIMEOUT)
+        # PING z ponawianiem: po resecie DTR bootloader Megi potrafi jeszcze
+        # przez kilka sekund polykac dane z portu - pierwszy PING wyslany za
+        # wczesnie ginie bez odpowiedzi (a Arduino IDE "dziala od razu", bo po
+        # otwarciu monitora niczego nie wysyla i po prostu czeka).
+        ping_ok = False
+        for attempt in range(PING_ATTEMPTS):
+            if attempt > 0:
+                # Daj bootloaderowi czas na oddanie sterowania firmware'owi;
+                # w miedzyczasie reader moze jeszcze zlapac READY.
+                self._ready_event.wait(timeout=PING_RETRY_DELAY)
+            try:
+                self.command("PING", timeout=PING_TIMEOUT)
+                ping_ok = True
+                break
+            except (RobotError, TimeoutError):
+                continue
+        if not ping_ok:
+            self.disconnect()
+            raise RobotError(
+                "NO_RESPONSE",
+                "port otwarty, ale brak odpowiedzi z Arduino. Sprawdź: "
+                f"firmware {EXPECTED_FW} wgrany z tego repo, baud 115200, "
+                "Serial Monitor zamknięty, wybrany ten sam port COM co w IDE",
+            )
+
+        # Weryfikacja firmware: stary/obcy szkic potrafi znac PING, ale nie
+        # STATUS/JOGR/SETHOME/GRIP - wtedy GUI dostawaloby lawine BAD_CMD.
         try:
-            self.command("PING", timeout=3.0)
+            fw = self.command("VERSION", timeout=PING_TIMEOUT)
         except (RobotError, TimeoutError):
             self.disconnect()
-            raise RobotError("NO_RESPONSE", "brak odpowiedzi z kontrolera")
+            raise RobotError(
+                "FW_MISMATCH",
+                "Arduino odpowiada, ale nie zna komendy VERSION — na płytce "
+                "jest inny lub stary szkic. Wgraj firmware z tego repo "
+                f"(src/main/main.ino, {EXPECTED_FW}) przez Arduino IDE",
+            )
+        if "SCARA-FW" not in fw:
+            self.disconnect()
+            raise RobotError(
+                "FW_MISMATCH",
+                f"nieznany firmware na płytce ('{fw}'). Wgraj firmware z tego "
+                f"repo (src/main/main.ino, {EXPECTED_FW}) przez Arduino IDE",
+            )
+        self._fw_version = fw
+        if not fw.startswith(EXPECTED_FW):
+            self._emit({
+                "type": "alarm",
+                "detail": (
+                    f"Firmware {fw}, oczekiwano {EXPECTED_FW} — część funkcji "
+                    "(SETHOME/JOGR/GRIP/SPEED) może nie działać. Wgraj "
+                    "aktualny src/main/main.ino"
+                ),
+            })
+
+        self._poller_thread = Thread(target=self._poller_loop, daemon=True)
+        self._poller_thread.start()
         self._emit({"type": "connection", "connected": True, "port": port})
 
     def disconnect(self) -> None:
         self.stop_program()
         self._alive.clear()
+        self._ready_event.clear()
         transport = self._transport
         self._transport = None
         self._port = None
+        self._fw_version = None
         if self._reader_thread is not None:
             self._reader_thread.join(timeout=1.0)
             self._reader_thread = None
@@ -156,6 +251,7 @@ class RobotManager:
             elif line.startswith("READY"):
                 with self._status_lock:
                     self._status = {"fw": line}
+                self._ready_event.set()
             elif line.startswith(("OK", "ERR")):
                 self._reply_queue.put(line)
             # inne linie (np. ERR LIMIT_HIT async) - tylko do logu:
@@ -249,7 +345,10 @@ class RobotManager:
 
     def status(self) -> Dict:
         with self._status_lock:
-            return dict(self._status)
+            status = dict(self._status)
+        if self._fw_version:
+            status["fw"] = self._fw_version
+        return status
 
     # ------------------------------------------------------------ operacje
     def home(self, axis: Optional[str] = None) -> None:

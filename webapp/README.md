@@ -5,13 +5,26 @@ Lokalna aplikacja webowa do sterowania robotem SCARA w stylu teach-pendant
 
 Polaczenie z robotem jest **przewodowe** - backend dziala na komputerze
 podlaczonym kablem USB do Arduino Mega, a GUI otwierasz w przegladarce pod
-`http://localhost:8000`. Wymaga firmware **SCARA-FW 2.1** (`../src/main/`).
+`http://localhost:8000`. Wymaga firmware **SCARA-FW 2.2** (`../src/main/`).
 
 ## Uruchomienie
+
+### Linux / macOS
 
 ```bash
 cd webapp
 python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+### Windows (PowerShell)
+
+```powershell
+cd webapp
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
 uvicorn backend.main:app --host 127.0.0.1 --port 8000
@@ -22,6 +35,22 @@ Nastepnie otworz [http://localhost:8000](http://localhost:8000), wybierz port
 
 > **Praca bez sprzetu:** wybierz port `sim` - wbudowany symulator odpowiada
 > identycznym protokolem co firmware i animuje ruch osi w czasie rzeczywistym.
+
+## Polaczenie z Arduino (Windows)
+
+Strona **nie** laczy sie z USB bezposrednio z przegladarki - robi to lokalny
+backend (`pyserial`). Jesli wgranie przez Arduino IDE dziala, a **Polacz** na
+stronie nie:
+
+1. **Zamknij Serial Monitor** (i najlepiej samo Arduino IDE) - port COM jest
+   wyłaczny; zajety port = blad `PORT_BUSY`.
+2. Uruchom backend (`uvicorn …`) i otworz `http://127.0.0.1:8000` (nie plik
+   `index.html` z dysku).
+3. Kliknij **⟳**, wybierz **ten sam COM** co Tools → Port w IDE (nie `sim`).
+4. Kliknij **Polacz**. W konsoli na dole powinny pojawic sie linie
+   `READY SCARA-FW 2.2` oraz `OK PONG`.
+5. Jesli widzisz `NO_RESPONSE`: wgraj ponownie `src/main/` (firmware 2.2),
+   baud 115200, bez otwartego monitora szeregowego.
 
 ## Funkcje
 

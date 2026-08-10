@@ -23,13 +23,32 @@ class SerialTransport:
     def __init__(self, port: str, baud: int = 115200) -> None:
         import serial  # import lokalny - symulator nie wymaga pyserial
 
-        self._serial = serial.Serial(port, baud, timeout=0.1)
+        # write_timeout: na Windows zajety COM potrafi zawiesic write() bez limitu.
+        # exclusive: unikaj cichego wspoldzielenia portu z Serial Monitor / IDE.
+        kwargs = dict(port=port, baudrate=baud, timeout=0.1, write_timeout=2.0)
+        try:
+            self._serial = serial.Serial(**kwargs, exclusive=True)
+        except TypeError:
+            self._serial = serial.Serial(**kwargs)
+        # Otwarcie portu resetuje Arduino (DTR) - wyczyść smieci z bootloadera.
+        time.sleep(0.05)
+        try:
+            self._serial.reset_input_buffer()
+            self._serial.reset_output_buffer()
+        except Exception:
+            pass
 
     def write_line(self, line: str) -> None:
         self._serial.write((line + "\n").encode("ascii"))
+        self._serial.flush()
 
     def read_line(self, timeout: float = 0.1) -> Optional[str]:
-        self._serial.timeout = timeout
+        # Nie przypisuj self._serial.timeout przy kazdym odczycie: na Windows
+        # kazde przypisanie wywoluje rekonfiguracje portu (SetCommState),
+        # a czesc sterownikow USB-serial porzuca wtedy dane czekajace w
+        # buforze RX - odpowiedzi z Arduino ginely losowo (NO_RESPONSE/504).
+        if self._serial.timeout != timeout:
+            self._serial.timeout = timeout
         raw = self._serial.readline()
         if not raw:
             return None
@@ -71,10 +90,10 @@ class _SimAxis:
 
 
 class SimulatedTransport:
-    """Symulator firmware SCARA-FW 2.1 na poziomie protokolu liniowego."""
+    """Symulator firmware SCARA-FW 2.2 na poziomie protokolu liniowego."""
 
     def __init__(self) -> None:
-        self._out: Deque[str] = deque(["READY SCARA-FW 2.1 (SIM)"])
+        self._out: Deque[str] = deque(["READY SCARA-FW 2.2 (SIM)"])
         self._lock = Lock()
         # Bazowe tempo osi przy 100% (zgodne z config.h: kroki/s / przelicznik).
         self.j1 = _SimAxis(4000.0 / 177.7778)   # ~22.5 deg/s
@@ -148,7 +167,7 @@ class SimulatedTransport:
         if cmd == "PING":
             self._reply("OK PONG")
         elif cmd == "VERSION":
-            self._reply("OK SCARA-FW 2.1 (SIM)")
+            self._reply("OK SCARA-FW 2.2 (SIM)")
         elif cmd == "STATUS":
             self._status(now)
         elif cmd == "SETHOME" or cmd.startswith("SETHOME "):
@@ -395,6 +414,8 @@ def list_serial_ports() -> List[dict]:
 
 
 def open_transport(port: str):
+    if not port or not str(port).strip():
+        raise ValueError("nie wybrano portu szeregowego")
     if port == SIM_PORT_NAME:
         return SimulatedTransport()
     return SerialTransport(port)

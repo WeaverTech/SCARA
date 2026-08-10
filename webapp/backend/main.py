@@ -77,7 +77,16 @@ def api_ports():
 
 @app.post("/api/connect")
 def api_connect(req: ConnectRequest):
-    _robot_call(manager.connect, req.port)
+    try:
+        _robot_call(manager.connect, req.port)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Ostatnia linia obrony: nie zwracaj gołego 500 bez komunikatu.
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "INTERNAL", "message": str(exc) or exc.__class__.__name__},
+        )
     return {"connected": True, "port": req.port}
 
 
