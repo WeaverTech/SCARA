@@ -284,6 +284,28 @@ bool homeJ2() {
 }
 
 // ---------------------------------------------------------- komendy
+// Parser argumentow "OS [wartosc]" (np. "J1 -12.5"). Zwraca liczbe pol (0-2).
+// Uwaga: avr-libc nie obsluguje "%f" w sscanf (wymaga libscanf_flt), wiec
+// sscanf("%7s %f") zawsze zwracal 1 i JOG/JOGR/SETHOME odrzucaly argumenty.
+int parseAxisArgs(const char* args, char* axisName, uint8_t nameSize,
+                  float& value) {
+  while (*args == ' ') ++args;
+  uint8_t n = 0;
+  while (*args != '\0' && *args != ' ') {
+    if (n < nameSize - 1) axisName[n++] = *args;
+    ++args;
+  }
+  axisName[n] = '\0';
+  if (n == 0) return 0;
+  while (*args == ' ') ++args;
+  if (*args == '\0') return 1;
+  char* end = nullptr;
+  const float parsed = strtod(args, &end);
+  if (end == args) return 1;  // po nazwie osi nie ma poprawnej liczby
+  value = parsed;
+  return 2;
+}
+
 // Wyszukuje w komendzie parametr postaci "<litera><liczba>", np. X120.5.
 bool parseParam(const char* cmd, char key, float& out) {
   for (const char* p = cmd; *p != '\0'; ++p) {
@@ -437,8 +459,8 @@ void commandJog(const char* args) {
     return;
   }
   char axisName[8];
-  float value;
-  if (sscanf(args, "%7s %f", axisName, &value) != 2) {
+  float value = 0.0f;
+  if (parseAxisArgs(args, axisName, sizeof(axisName), value) != 2) {
     sendErr(F("BAD_CMD"), F("uzycie: JOG J1|J2|Z|TOOL <wartosc>"));
     return;
   }
@@ -484,8 +506,8 @@ void commandJog(const char* args) {
 // bo pozycja osi jest nieznana.
 void commandJogRelative(const char* args) {
   char axisName[8];
-  float delta;
-  if (sscanf(args, "%7s %f", axisName, &delta) != 2) {
+  float delta = 0.0f;
+  if (parseAxisArgs(args, axisName, sizeof(axisName), delta) != 2) {
     sendErr(F("BAD_CMD"), F("uzycie: JOGR J1|J2|Z|TOOL <delta>"));
     return;
   }
@@ -535,7 +557,7 @@ void commandJogRelative(const char* args) {
 void commandSetHome(const char* args) {
   char axisName[8] = "";
   float value = NAN;
-  const int parsed = sscanf(args, "%7s %f", axisName, &value);
+  const int parsed = parseAxisArgs(args, axisName, sizeof(axisName), value);
 
   if (parsed <= 0) {
     // SETHOME bez argumentow: wszystkie osie w pozycjach krancowych.
