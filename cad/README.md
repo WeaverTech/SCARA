@@ -23,6 +23,13 @@ Modele 3D i materialy zrodlowe robota SCARA.
   plyty `Axis1_Plate_*`, `Axis2_Plate_*`, dystanse.
 - **Lacznik:** sruby `91292A352`, standoffy.
 
+## Os Z v2 (propozycja)
+
+W [`v2/`](v2/) jest analiza sztywnosci v1 i parametryczny model nowej,
+zabudowanej osi Z (3 walki 12 mm w trojkacie, silnik J1 w srodku trojkata,
+sruba T8) z renderami i eksportem STEP. Szczegoly:
+[`v2/README.md`](v2/README.md).
+
 ## Sugerowany podzial przy rozbudowie
 
 - `printed-parts/` - elementy drukowane w 3D z PET-G,
