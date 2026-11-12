@@ -10,8 +10,7 @@ Gałęzie `cursor/*` to kolejne sesje agentów. Ich treść albo już jest w `ma
 
 Nie rób tego:
 
-- nie szukaj „prawdziwego” projektu na innej gałęzi,
-- nie merguj PR #1, #2, #3 ani #4 — są sprzed uporządkowania i część celuje w pusty albo częściowy `main`,
+- nie szukaj „prawdziwego” projektu na innej gałęzi i nie otwieraj ponownie PR #1–#4 (zamknięte, starsze i sprzeczne z `main`),
 - nie odtwarzaj `src/main.ino` ani `src/config.h` z korzenia `src/` (aktualny szkic to `src/main/`).
 
 Nową pracę commituj na gałęzi od **aktualnego `main`** i otwieraj PR do `main`.

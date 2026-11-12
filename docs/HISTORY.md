@@ -26,20 +26,22 @@ Te gałęzie startują z pustego `main` i **nie zawierają** późniejszego firm
 | --- | --- |
 | `cursor/scara-project-bootstrap-abad` | Szkic `src/main.ino` w korzeniu `src/`. Zastąpiony przez `src/main/`. |
 | `cursor/scara-project-scaffold-7917` | Robot bez łokcia, L1 = 150 mm, piny D2–D10, krańcówki D22/D23. Inna kinematyka niż obecna. |
-| `cursor/scara-robot-v1-8f9e` (PR #1, otwarty, base `main`) | v1.0 bez łokcia w kodzie: `src/config.h` + `src/main.ino`, piny D2–D10, krańcówki D18/D19, przykładowe przełożenie efektora 2:1 i śruba „do zmierzenia”. PR #1 wciąż proponuje wmergowanie tego do `main`. Nie mergować. |
-| `cursor/setup-dev-environment-0d67` (PR #2, otwarty) | `AGENTS.md` z informacją, że repozytorium jest puste. To już nieprawda. Nie mergować. |
+| `cursor/scara-robot-v1-8f9e` (PR #1, zamknięty bez merge) | v1.0 bez łokcia w kodzie: `src/config.h` + `src/main.ino`, piny D2–D10, krańcówki D18/D19, przykładowe przełożenie efektora 2:1 i śruba „do zmierzenia”. |
+| `cursor/setup-dev-environment-0d67` (PR #2, zamknięty bez merge) | `AGENTS.md` z informacją, że repozytorium jest puste. To już nieprawda. |
 | Stary `docs/README.md` | Własna tabela pinów (krańcówki 40/41/42) i łokieć 20:1. Usunięty przy porządkowaniu, bo dało się go wziąć za schemat. |
 | Duplikat renderu | `Zrzut ekranu 2026-06-09 221726 — kopia.png` był bajt w bajt taki sam jak plik bez „kopia”. Został jeden plik: `cad/v1/renders/full-machine-2026-06-09.png`. |
 
-## Otwarte PR-y w chwili porządkowania
+## Pull requesty
 
-Numery zostają na GitHubie. Po pojawieniu się pełnego `main` nie wnoszą nowego kodu albo wnoszą starszy.
+Wszystkie są zamknięte. Zostały numery, nie ma otwartej roboty.
 
-| PR | Base → head | Co z nim zrobić |
+| PR | Stan | Dlaczego nie jest osobną linią pracy |
 | --- | --- | --- |
-| [#1](https://github.com/WeaverTech/SCARA/pull/1) | `main` ← `scara-robot-v1-8f9e` | Zostawić historycznie. Merge nadpisałby `main` kodem v1.0 bez łokcia i ze złymi pinami. |
-| [#2](https://github.com/WeaverTech/SCARA/pull/2) | `main` ← `setup-dev-environment-0d67` | J.w. Opisuje pusty `main`. |
-| [#3](https://github.com/WeaverTech/SCARA/pull/3) | `main` ← `scara-project-scaffold-4a95_GPT` | Wczesny, już niepełny stan panelu i firmware (sprzed PR #5–#8). |
-| [#4](https://github.com/WeaverTech/SCARA/pull/4) | scaffold ← `fix-web-arduino-serial-0df9` | Head ma pełny kod, ale base to stary scaffold, nie `main`. Diff nie jest „tym, co dochować do main”. |
+| [#1](https://github.com/WeaverTech/SCARA/pull/1) | zamknięty, bez merge | Szkic v1.0 bez łokcia i ze starymi pinami. |
+| [#2](https://github.com/WeaverTech/SCARA/pull/2) | zamknięty, bez merge | Opis pustego `main`. |
+| [#3](https://github.com/WeaverTech/SCARA/pull/3) | zmergowany | Wczesny firmware i panel. Nowszy stan jest dalej na `main`. |
+| [#4](https://github.com/WeaverTech/SCARA/pull/4) | zamknięty, bez merge | Handshake jest już na `main`; PR celował w stary scaffold. |
+| [#5](https://github.com/WeaverTech/SCARA/pull/5)–[#8](https://github.com/WeaverTech/SCARA/pull/8) | zmergowane | Poprawki szeregowe i oś Z v2. Commity są w historii `main`. |
+| [#9](https://github.com/WeaverTech/SCARA/pull/9) | zmergowany | Uporządkowanie, które wstawiło cały projekt na `main`. |
 
-PR #5, #6, #7 i #8 są zamknięte i zmergowane do gałęzi `cursor/fix-web-arduino-serial-0df9`. Ich commity są przodkami `main` od momentu uporządkowania.
+Gałęzie `cursor/*` zostały skasowane po tym zamknięciu. Zostaje `main`. Commity odrzuconych szkiców nadal da się otworzyć z zamkniętych PR #1 i #2; nie trzeba ich przywracać jako gałęzi.

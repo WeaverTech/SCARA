@@ -2,7 +2,7 @@
 
 Robot SCARA na profilach aluminiowych 2020, z dwiema przekładniami cykloidalnymi (bark i łokieć), osią Z i obrotowym efektorem. Elektronika: Arduino Mega 2560, 4× TB6600, 4× NEMA 17, gripper SG90.
 
-**Pracuj z gałęzi `main`.** Boczne gałęzie `cursor/*` to historyczne wrzuty agentów. Nie zaczynaj od nich pracy i nie merguj otwartych PR-ów #1–#4 — opis w [`docs/HISTORY.md`](docs/HISTORY.md).
+**Pracuj z gałęzi `main`.** Innych gałęzi nie ma. Zamknięte PR-y #1–#4 są starsze i sprzeczne z tym stanem — opis w [`docs/HISTORY.md`](docs/HISTORY.md).
 
 ![Maszyna v1](cad/v1/renders/full-machine-2026-06-16.png)
 
