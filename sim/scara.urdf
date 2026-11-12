@@ -5,19 +5,20 @@
   Lancuch kinematyczny (zgodny z firmware src/main/main.ino):
     world
       +- (fixed)      base_column        # pionowa wieza z profili 2020
-            +- (Z, prismatic)  z_carriage   # podnoszenie na pasku GT2
+            +- (Z, prismatic)  z_carriage   # CAD v1: pasek GT2; firmware: sruba
                   +- (shoulder, revolute)  link1   # bark, cykloidalna 20:1
-                        +- (elbow, revolute)  link2  # lokiec, cykloidalna 20:1
+                        +- (elbow, revolute)  link2  # lokiec, cykloidalna 14:1 (config.h)
                               +- (tool, revolute)  tool_link  # efektor (pasek)
                                     +- (fixed)  tool_tip       # punkt TCP
 
   Jednostki URDF: metry, radiany.
   Wszystkie osie obrotowe sa pionowe (+Z) - typowa geometria SCARA.
 
-  Wymiary (z briefu / CAD; TODO: dlugosci czlonow potwierdzic pomiarem):
+  Wymiary jak w firmware (config.h), NIE jak odleglosci osi w cad/v1/SCARA.step.
+  Rozbieznosc jest opisana w docs/STATUS.md — nie uzgadniac bez pomiaru.
     Z offset (kolumna -> os barku)      = 0.165 m
-    L1 (os barku  -> os lokcia)         = 0.139928 m  (zmierzone w CAD)
-    L2 (os lokcia -> os efektora)       = 0.140000 m  (zmierzone w CAD)
+    L1 (os barku  -> os lokcia)         = 0.139928 m
+    L2 (os lokcia -> os efektora)       = 0.140000 m
     Skok osi Z (zakres prismatic)       = 0.150 m
 -->
 <robot name="scara">
@@ -55,7 +56,7 @@
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
-  <!-- ===================== Os Z (prismatic, pasek GT2) ===================== -->
+  <!-- Os Z (prismatic). CAD v1: pasek GT2. Firmware: sruba, 400 krokow/mm. Patrz docs/STATUS.md. -->
   <link name="z_carriage">
     <visual>
       <origin xyz="0.04 0 0" rpy="0 0 0"/>
@@ -109,7 +110,7 @@
     <limit lower="-3.1416" upper="3.1416" effort="20.0" velocity="1.0"/>
   </joint>
 
-  <!-- ===================== Lokiec (revolute, cykloidalna 20:1) ===================== -->
+  <!-- ===================== Lokiec (revolute, cykloidalna 14:1) ===================== -->
   <link name="link2">
     <visual>
       <origin xyz="0.070 0 0" rpy="0 0 0"/>

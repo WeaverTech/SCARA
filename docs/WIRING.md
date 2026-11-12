@@ -4,6 +4,12 @@ Okablowanie dla firmware **SCARA-FW 2.2** (`src/main/config.h`).
 Kontroler: Arduino Mega 2560, 4x sterownik TB6600, 4x NEMA 17,
 serwo SG90 (gripper), opcjonalnie 3 krancowki optyczne.
 
+To jest aktualna mapa pinow. Starsze szkice (PR #1, galezie
+`scara-robot-v1` i `scara-project-scaffold-7917`) mialy inne piny
+(D2–D10, krancowki D18/D19 albo D22/D23) — nie wracac do nich.
+Os Z w CAD v1 jest na pasku GT2, a ten schemat i firmware zakladaja
+srube (400 krokow/mm). Rozbieznosc: [`STATUS.md`](STATUS.md).
+
 ## Schemat ogolny
 
 ```

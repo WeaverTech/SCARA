@@ -20,7 +20,7 @@
 //
 //  Komendy:
 //    PING                        -> OK PONG
-//    VERSION                     -> OK SCARA-FW 2.0
+//    VERSION                     -> OK <FW_VERSION>   (config.h, obecnie SCARA-FW 2.2)
 //    STATUS                      -> OK STATE=<IDLE|MOVING|HOMING> HOMED=<0|1>
 //                                      X=.. Y=.. Z=.. J1=.. J2=.. TOOL=..
 //    HOME                        homing wszystkich osi (Z -> J1 -> J2)

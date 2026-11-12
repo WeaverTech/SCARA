@@ -1,4 +1,4 @@
-"""Parametryczny model osi Z v2 (CadQuery) + import ramienia v1 z cad/SCARA.step.
+"""Parametryczny model osi Z v2 (CadQuery) + import ramienia v1 z cad/v1/SCARA.step.
 
     python3 cad/v2/z_gantry_v2.py            # eksport cad/v2/z_gantry_v2.step
     python3 cad/v2/z_gantry_v2.py --check    # tylko raport kolizji / zakresu J1
@@ -22,7 +22,7 @@ import cadquery as cq
 import params as P
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-V1_STEP = os.path.join(HERE, "..", "SCARA.step")
+V1_STEP = os.path.join(HERE, "..", "v1", "SCARA.step")
 
 ALU = (0.72, 0.74, 0.77)
 ALU_DARK = (0.16, 0.16, 0.17)

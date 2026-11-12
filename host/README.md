@@ -13,12 +13,12 @@ pip install -r requirements.txt
 
 Kazda komenda dostaje jedna linie odpowiedzi `OK[ dane]` lub `ERR KOD opis`.
 Po zakonczeniu ruchu kontroler wysyla asynchronicznie `DONE`.
-Po resecie kontroler wysyla `READY SCARA-FW 2.0`.
+Po resecie kontroler wysyla `READY SCARA-FW 2.2` (tresc z `FW_VERSION` w `config.h`).
 
 | Komenda | Odpowiedz | Opis |
 | --- | --- | --- |
 | `PING` | `OK PONG` | test lacza |
-| `VERSION` | `OK SCARA-FW 2.0` | wersja firmware |
+| `VERSION` | `OK SCARA-FW 2.2` | wersja firmware (`FW_VERSION`) |
 | `STATUS` | `OK STATE=.. HOMED=.. X=.. Y=.. Z=.. J1=.. J2=.. TOOL=..` | pelny stan |
 | `HOME [J1\|J2\|Z]` | `OK` / `ERR HOMING_FAIL ...` | homing na krancowkach (bez argumentu: Z, J1, J2) |
 | `SETHOME [J1\|J2\|Z\|TOOL] [wart]` | `OK` | homing reczny: biezaca pozycja = krancowa z config.h (lub podana) |

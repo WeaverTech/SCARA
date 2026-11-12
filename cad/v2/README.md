@@ -1,6 +1,6 @@
 # Os Z v2 - przeprojektowanie (3 walki w trojkacie, silnik J1 w srodku)
 
-Analiza v1 na podstawie `cad/SCARA.step` + propozycja nowej, zabudowanej osi Z.
+Analiza v1 na podstawie `cad/v1/SCARA.step` + propozycja nowej, zabudowanej osi Z.
 Ramie i przekladnie cykloidalne zostaja bez zmian (importowane 1:1 z STEP v1),
 rama nadal z profili 2020.
 
@@ -48,8 +48,8 @@ na kazdy 1 N*m momentu J1. To jest ta "gumowatosc", ktora widac w v1.
   a odleglosc osi barku od walkow wynosi ~161 mm.
 - **`STEPS_PER_MM_Z = 400`** odpowiada srubie T8x8, a w CAD jest pasek GT2
   36T (72 mm/obr -> 44.4 krokow/mm).
-- `STEPS_PER_DEG_J2` w `config.h` liczony dla 14:1, a `docs/README.md`
-  i komentarze URDF mowia o 20:1.
+- `STEPS_PER_DEG_J2` w `config.h` jest liczony dla 14:1. Starsze README
+  i komentarz URDF mowily o 20:1; po uporzadkowaniu zrodlem jest `config.h`.
 
 ## 2. Koncepcja v2
 
@@ -212,7 +212,7 @@ na ramieniu (zmiana ramienia).
   `test_stiffness.py` - test modelu belkowego vs wzory zamkniete.
 - `z_gantry_v2.py` - model CadQuery; eksportuje `z_gantry_v2.step` (sama os Z
   v2, do zaimportowania w Fusion), `--check` raportuje zakres J1.
-- `render.py` - rendery do `renders/` (ramie importowane z `../SCARA.step`).
+- `render.py` - rendery do `renders/` (ramie importowane z `cad/v1/SCARA.step`).
 
 ```bash
 pip install -r cad/v2/requirements.txt

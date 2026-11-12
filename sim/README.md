@@ -1,8 +1,10 @@
 # Kinematyka i symulacja SCARA
 
 Modul opisuje pelna kinematyke robota (model URDF), analityczna kinematyke
-prosta/odwrotna oraz symulacje w PyBullet. Wszystko jest spojne ze stalymi
-napedu z firmware ([`../src/main/main.ino`](../src/main/main.ino)).
+prosta/odwrotna oraz symulacje w PyBullet. Stale napedu sa spojne z
+[`../src/main/config.h`](../src/main/config.h). Wymiary L1/L2 i naped osi Z
+nie sa uzgodnione z CAD — patrz [`../docs/STATUS.md`](../docs/STATUS.md).
+Nie zmieniac liczb „dla zgodnosci z STEP” bez pomiaru.
 
 ## Zawartosc
 
@@ -21,9 +23,9 @@ SCARA z czterema osiami (wszystkie osie obrotowe sa pionowe, +Z):
 ```
 world
   └─(fixed)        base_column        # pionowa wieza z profili 2020
-      └─(Z, prismatic)  z_carriage    # podnoszenie na pasku GT2
+      └─(Z, prismatic)  z_carriage    # CAD v1: pasek GT2; firmware: sruba
           └─(shoulder, revolute) link1   # bark,  cykloidalna 20:1
-              └─(elbow, revolute)  link2  # lokiec, cykloidalna 20:1
+              └─(elbow, revolute)  link2  # lokiec, cykloidalna 14:1 (config.h)
                   └─(tool, revolute) tool_link  # efektor (pasek)
                       └─(fixed) tool_tip         # punkt TCP
 ```
@@ -117,7 +119,7 @@ Aby uzyc realnych ksztaltow:
 
 ## Status / TODO
 
-- [x] Zmierzone realne L1 = 139.928 mm, L2 = 140.000 mm (CAD).
+- [ ] Uzgodnic L1/L2 z pomiarem. Firmware ma 139.928 / 140 mm, STEP v1 ma 170 / 150 mm (`docs/STATUS.md`).
 - [ ] Doprecyzowac limity stawow (z renderu widoczne adnotacje 60°/15°/25°).
 - [ ] Dodac siatki STL dla lepszej wizualizacji i kolizji.
 - [ ] (Opcjonalnie) pakiet ROS 2 + MoveIt 2.

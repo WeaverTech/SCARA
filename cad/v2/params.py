@@ -9,7 +9,7 @@ os barku (wyjscie przekladni) jest przesunieta o GEARBOX_IN_OUT_MM wzdluz +X.
 
 from math import sqrt
 
-# --- Pomiar z cad/SCARA.step (v1) ---
+# --- Pomiar z cad/v1/SCARA.step ---
 V1_J1_INPUT_XY = (101.0, -72.5)    # os silnika J1 / wejscie przekladni
 V1_SHOULDER_XY = (201.0, -72.5)    # os barku (lozysko MH-P16)
 V1_ELBOW_XY = (353.6, 2.4)         # os lokcia
